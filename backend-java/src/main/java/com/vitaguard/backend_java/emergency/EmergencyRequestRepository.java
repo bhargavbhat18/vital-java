@@ -1,0 +1,13 @@
+package com.vitaguard.backend_java.emergency;
+
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.stereotype.Repository;
+
+import java.util.List;
+
+@Repository
+public interface EmergencyRequestRepository extends JpaRepository<EmergencyRequest, Long> {
+    List<EmergencyRequest> findByPatientUid(String patientUid);
+    List<EmergencyRequest> findByStatusIn(List<String> statuses);
+    List<EmergencyRequest> findByHospitalIdAndStatusIn(Long hospitalId, List<String> statuses);
+}
