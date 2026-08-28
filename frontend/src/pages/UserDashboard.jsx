@@ -115,6 +115,10 @@ const UserDashboard = () => {
   const [activeChartMetric, setActiveChartMetric] = useState('hr');
   const [activeTimeRange, setActiveTimeRange] = useState('30m');
 
+  // AI Predictive states
+  const [aiAssessment, setAiAssessment] = useState(null);
+  const [aiBaseline, setAiBaseline] = useState(null);
+
   const stompClientRef = useRef(null);
 
   useEffect(() => {
@@ -123,7 +127,25 @@ const UserDashboard = () => {
     loadMedicalProfile();
     checkActiveSos();
     loadPastEmergencies();
+    loadAiData();
   }, [user]);
+
+  const loadAiData = async () => {
+    if (!user) return;
+    try {
+      const assessmentRes = await API.get(`/ai/patients/${user.uid}/assessment`);
+      if (assessmentRes.status === 200 && assessmentRes.data) {
+        setAiAssessment(assessmentRes.data);
+      }
+      
+      const baselineRes = await API.get(`/ai/patients/${user.uid}/baseline`);
+      if (baselineRes.status === 200 && baselineRes.data) {
+        setAiBaseline(baselineRes.data);
+      }
+    } catch (err) {
+      console.error("Failed to load AI predictive metrics:", err);
+    }
+  };
 
   // WebSocket Subscription
   useEffect(() => {
@@ -140,6 +162,13 @@ const UserDashboard = () => {
           setLatestVital(vital);
           setVitalsHistory(prev => [vital, ...prev]);
           loadTrendAnalysis();
+          loadAiData();
+        });
+
+        // AI Risk stream
+        client.subscribe(`/topic/ai-risk/${user.uid}`, (msg) => {
+          const assessment = JSON.parse(msg.body);
+          setAiAssessment(assessment);
         });
 
         // Family notification alerts
@@ -765,31 +794,97 @@ const UserDashboard = () => {
               {/* Side controls/logger */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                 <div className="saas-card">
-                  <h3 className="card-title" style={{ marginBottom: '14px' }}>🤖 AI Health Risk Analysis</h3>
-                  {trendAnalysis ? (
+                  <h3 className="card-title" style={{ marginBottom: '14px' }}>🧠 AI Health Monitor</h3>
+                  {aiAssessment ? (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', fontSize: '13px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600 }}>
-                        <span>Current rating status:</span>
-                        <span style={{ color: trendAnalysis.warning ? 'var(--accent-red)' : 'var(--accent-green)' }}>
-                          {trendAnalysis.prediction.toUpperCase()} ({trendAnalysis.risk_score}/100)
-                        </span>
+                      
+                      {/* Risk Fusion Progress Gauge */}
+                      <div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 600, marginBottom: '6px' }}>
+                          <span>Unified Risk Fusion:</span>
+                          <span style={{ 
+                            color: aiAssessment.severity === 'CRITICAL' || aiAssessment.severity === 'HIGH' ? 'var(--accent-red)' : 
+                                   aiAssessment.severity === 'MODERATE' ? '#eab308' : 'var(--accent-green)' 
+                          }}>
+                            {aiAssessment.severity} ({aiAssessment.riskScore}/100)
+                          </span>
+                        </div>
+                        <div style={{ background: '#f3f4f6', borderRadius: '8px', height: '8px', overflow: 'hidden' }}>
+                          <div style={{ 
+                            width: `${aiAssessment.riskScore}%`, 
+                            background: aiAssessment.severity === 'CRITICAL' || aiAssessment.severity === 'HIGH' ? 'var(--accent-red)' : 
+                                        aiAssessment.severity === 'MODERATE' ? '#eab308' : 'var(--accent-green)',
+                            height: '100%',
+                            transition: 'width 0.3s ease'
+                          }} />
+                        </div>
                       </div>
-                      <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '12px' }}>
-                        {trendAnalysis.warnings && trendAnalysis.warnings.length > 0 ? (
-                          <ul style={{ paddingLeft: '20px', color: 'var(--accent-red)', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            {trendAnalysis.warnings.map((w, idx) => <li key={idx}>{w}</li>)}
+
+                      {/* Deterioration Probability */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Deterioration Prob:</span>
+                        <span style={{ fontWeight: 600 }}>{(aiAssessment.deteriorationProbability * 100).toFixed(0)}%</span>
+                      </div>
+
+                      {/* Personalized Baseline Vitals Deviation */}
+                      {aiBaseline && (
+                        <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                          <span style={{ fontWeight: 600, display: 'block', marginBottom: '8px' }}>Personalized Baseline Stats</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span>HR Range (Baseline):</span>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {Math.round(aiBaseline.normalHeartRateMin)} - {Math.round(aiBaseline.normalHeartRateMax)} BPM
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span>SpO₂ Limit (Baseline):</span>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                &ge; {Math.round(aiBaseline.normalSpo2Min)}%
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span>Temp Range (Baseline):</span>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                {aiBaseline.normalTemperatureMin.toFixed(1)} - {aiBaseline.normalTemperatureMax.toFixed(1)}°C
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* AI Clinical Explanations */}
+                      <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                        <span style={{ fontWeight: 600, display: 'block', marginBottom: '6px' }}>AI Predictive Insights:</span>
+                        {aiAssessment.explanations ? (
+                          <ul style={{ paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '4px', margin: 0 }}>
+                            {aiAssessment.explanations.split('; ').map((item, idx) => (
+                              <li key={idx} style={{ color: item.includes('offline') || item.includes('differ') ? 'var(--accent-red)' : 'var(--text-normal)' }}>
+                                {item}
+                              </li>
+                            ))}
                           </ul>
                         ) : (
-                          <div style={{ color: 'var(--accent-green)', fontWeight: 600 }}>
-                            ✓ Vitals stable. No regression anomalies detected.
-                          </div>
+                          <span style={{ color: 'var(--accent-green)' }}>✓ Patient vitals stable and normal.</span>
                         )}
                       </div>
-                      <p style={{ fontSize: '10px', color: 'var(--text-muted)', fontStyle: 'italic', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
-                        AI-assisted risk analysis — prototype only, not a medical diagnosis.
+
+                      {/* Anomaly Indicator */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid var(--border-color)', paddingTop: '10px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>Anomaly Dev Score:</span>
+                        <span style={{ fontWeight: 600, color: aiAssessment.anomalyScore > 30 ? 'var(--accent-red)' : 'var(--text-normal)' }}>
+                          {aiAssessment.anomalyScore}/100
+                        </span>
+                      </div>
+
+                      {/* Disclaimer */}
+                      <p style={{ fontSize: '10px', color: 'var(--text-muted)', fontStyle: 'italic', borderTop: '1px solid var(--border-color)', paddingTop: '10px', margin: 0 }}>
+                        AI-assisted prediction — Prototype only, not a medical diagnosis.
                       </p>
                     </div>
-                  ) : <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Log vitals telemetry to activate AI triage.</p>}
+                  ) : (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Log vitals telemetry to activate AI triage.</p>
+                  )}
                 </div>
 
                 <div className="saas-card">

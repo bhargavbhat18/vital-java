@@ -3,6 +3,8 @@ package com.vitaguard.backend_java.user;
 import com.vitaguard.backend_java.medical.RiskAnalysisService;
 import com.vitaguard.backend_java.medical.RiskResult;
 import com.vitaguard.backend_java.medical.AnomalyDetectionService;
+import com.vitaguard.backend_java.medical.AIHealthAssessmentService;
+import com.vitaguard.backend_java.medical.AIHealthAssessment;
 import com.vitaguard.backend_java.emergency.EmergencyWorkflowService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -21,19 +23,22 @@ public class VitalsController {
     private final RiskAnalysisService riskAnalysisService;
     private final AnomalyDetectionService anomalyDetectionService;
     private final EmergencyWorkflowService workflowService;
+    private final AIHealthAssessmentService aiHealthAssessmentService;
 
     public VitalsController(
             VitalRepository vitalRepository,
             SimpMessagingTemplate messagingTemplate,
             RiskAnalysisService riskAnalysisService,
             AnomalyDetectionService anomalyDetectionService,
-            EmergencyWorkflowService workflowService
+            EmergencyWorkflowService workflowService,
+            AIHealthAssessmentService aiHealthAssessmentService
     ) {
         this.vitalRepository = vitalRepository;
         this.messagingTemplate = messagingTemplate;
         this.riskAnalysisService = riskAnalysisService;
         this.anomalyDetectionService = anomalyDetectionService;
         this.workflowService = workflowService;
+        this.aiHealthAssessmentService = aiHealthAssessmentService;
     }
 
     @PostMapping("/vitals")
@@ -71,8 +76,12 @@ public class VitalsController {
 
         vitalRepository.save(vital);
 
-        // Broadcast vital update to client
+        // Perform AI Health Assessment & Forecast
+        AIHealthAssessment aiAssessment = aiHealthAssessmentService.performAssessment(vital, history, risk);
+
+        // Broadcast vital and AI risk updates to client
         messagingTemplate.convertAndSend("/topic/vitals/" + patientUid, vital);
+        messagingTemplate.convertAndSend("/topic/ai-risk/" + patientUid, aiAssessment);
 
         // Auto-Trigger Emergency Workflow if Severity is CRITICAL
         if ("CRITICAL".equalsIgnoreCase(risk.getSeverity())) {

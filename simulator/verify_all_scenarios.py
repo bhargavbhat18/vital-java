@@ -225,8 +225,81 @@ def run_tests():
     assert updates_received > 0, "Should receive location simulation coordinate updates via WebSocket"
     print("[+] Scenario 7 successfully verified. Real-time updates delivered over STOMP/WS.")
 
+    # ----------------------------------------------------
+    # SCENARIO 8: Normal Vitals Ingest -> Low AI Risk
+    # ----------------------------------------------------
+    print("\n--- Running Scenario 8: Normal Vitals -> Low AI Risk ---")
+    vitals_payload_normal = {
+        "heart_rate": 72,
+        "spO2": 98,
+        "temperature": 36.6,
+        "bp_systolic": 120,
+        "bp_diastolic": 80,
+        "glucose": 95,
+        "respiratory_rate": 16,
+        "latitude": 12.9716,
+        "longitude": 77.5946
+    }
+    r = requests.post(f"{BASE_URL}/api/vitals", json=vitals_payload_normal, headers=headers)
+    if r.status_code != 200:
+        print("[-] Vitals post failed.")
+        sys.exit(1)
+    
+    r = requests.get(f"{BASE_URL}/api/ai/patients/LKT01/assessment", headers=headers)
+    assert r.status_code == 200, "Should successfully fetch AI assessment"
+    assessment = r.json()
+    print(f"[+] AI Assessment: Risk={assessment['riskScore']}/100, Severity={assessment['severity']}, Prob={assessment['deteriorationProbability']}")
+    assert assessment['riskScore'] < 40, "Risk score should be low for normal vitals"
+    print("[+] Scenario 8 successfully verified.")
+
+    # ----------------------------------------------------
+    # SCENARIO 9: Gradual SpO₂ decrease -> Personalized Baseline Anomaly
+    # ----------------------------------------------------
+    print("\n--- Running Scenario 9: SpO₂ Decrease -> Baseline Anomaly ---")
+    for _ in range(3):
+        requests.post(f"{BASE_URL}/api/vitals", json=vitals_payload_normal, headers=headers)
+        
+    vitals_payload_drop = vitals_payload_normal.copy()
+    vitals_payload_drop["spO2"] = 92.0
+    r = requests.post(f"{BASE_URL}/api/vitals", json=vitals_payload_drop, headers=headers)
+    
+    r = requests.get(f"{BASE_URL}/api/ai/patients/LKT01/assessment", headers=headers)
+    assessment = r.json()
+    print(f"[+] Anomaly Dev Score: {assessment['anomalyScore']}/100")
+    print(f"    Explanations: {assessment['explanations']}")
+    assert assessment['anomalyScore'] > 20, "Anomaly score should reflect baseline deviation"
+    print("[+] Scenario 9 successfully verified.")
+
+    # ----------------------------------------------------
+    # SCENARIO 10: Rising HR + Falling SpO₂ -> Elevated Deterioration Prob
+    # ----------------------------------------------------
+    print("\n--- Running Scenario 10: Rising HR + Falling SpO₂ -> High Deterioration Prob ---")
+    vitals_payload_severe = vitals_payload_normal.copy()
+    vitals_payload_severe["heart_rate"] = 125.0
+    vitals_payload_severe["spO2"] = 88.0
+    vitals_payload_severe["temperature"] = 38.8
+    r = requests.post(f"{BASE_URL}/api/vitals", json=vitals_payload_severe, headers=headers)
+    
+    r = requests.get(f"{BASE_URL}/api/ai/patients/LKT01/forecast", headers=headers)
+    forecast = r.json()
+    print(f"[+] AI Forecast: Prob={forecast['deteriorationProbability']}, Level={forecast['riskLevel']}")
+    print(f"    Explanations: {forecast['explanation']}")
+    assert forecast['deteriorationProbability'] > 0.50, "Deterioration probability should increase for severe vitals"
+    print("[+] Scenario 10 successfully verified.")
+
+    # ----------------------------------------------------
+    # SCENARIO 11: Patient Baseline statistics check
+    # ----------------------------------------------------
+    print("\n--- Running Scenario 11: Patient Baseline Range Retrieval ---")
+    r = requests.get(f"{BASE_URL}/api/ai/patients/LKT01/baseline", headers=headers)
+    assert r.status_code == 200, "Should get baseline statistics"
+    baseline = r.json()
+    print(f"[+] Baseline: HR Range={baseline['normalHeartRateMin']:.1f} - {baseline['normalHeartRateMax']:.1f}")
+    print(f"    Baseline: SpO2 Limit={baseline['normalSpo2Min']:.1f}")
+    print("[+] Scenario 11 successfully verified.")
+
     print("\n==================================================")
-    print("     ALL 7 SCENARIOS VERIFIED SUCCESSFULLY!       ")
+    print("     ALL 11 SCENARIOS VERIFIED SUCCESSFULLY!      ")
     print("==================================================")
 
 if __name__ == "__main__":

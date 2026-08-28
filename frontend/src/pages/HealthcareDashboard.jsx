@@ -26,6 +26,10 @@ const HealthcareDashboard = () => {
   const [patientVitals, setPatientVitals] = useState(null);
   const [timelineEvents, setTimelineEvents] = useState([]);
 
+  // AI Insights states
+  const [aiAssessment, setAiAssessment] = useState(null);
+  const [aiBaseline, setAiBaseline] = useState(null);
+
   const stompClientRef = useRef(null);
 
   // Set default tabs based on role
@@ -53,8 +57,31 @@ const HealthcareDashboard = () => {
     if (selectedEmergency) {
       loadPatientDetails(selectedEmergency.patientUid);
       loadTimeline(selectedEmergency.id);
+      loadAiData(selectedEmergency.patientUid);
     }
   }, [selectedEmergency]);
+
+  const loadAiData = async (patientUid) => {
+    try {
+      const assessmentRes = await API.get(`/ai/patients/${patientUid}/assessment`);
+      if (assessmentRes.status === 200 && assessmentRes.data) {
+        setAiAssessment(assessmentRes.data);
+      } else {
+        setAiAssessment(null);
+      }
+      
+      const baselineRes = await API.get(`/ai/patients/${patientUid}/baseline`);
+      if (baselineRes.status === 200 && baselineRes.data) {
+        setAiBaseline(baselineRes.data);
+      } else {
+        setAiBaseline(null);
+      }
+    } catch (err) {
+      console.error("Failed to load patient AI insights:", err);
+      setAiAssessment(null);
+      setAiBaseline(null);
+    }
+  };
 
   // STOMP WebSocket Sync
   useEffect(() => {
@@ -383,6 +410,45 @@ const HealthcareDashboard = () => {
                       </p>
                     </div>
 
+                    {/* AI Clinical Insights card */}
+                    {aiAssessment && (
+                      <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', padding: '16px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                        <span style={{ fontSize: '11px', color: '#6d28d9', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          🧠 AI CLINICAL PREDICTION INSIGHTS
+                        </span>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', fontSize: '12px', marginTop: '4px' }}>
+                          <div>
+                            <p style={{ margin: '2px 0' }}><strong>Unified Risk Score:</strong> {aiAssessment.riskScore}/100 ({aiAssessment.severity})</p>
+                            <p style={{ margin: '2px 0' }}><strong>Deterioration Prob:</strong> {(aiAssessment.deteriorationProbability * 100).toFixed(0)}%</p>
+                            <p style={{ margin: '2px 0' }}><strong>Personalized Anomaly Dev:</strong> {aiAssessment.anomalyScore}/100</p>
+                          </div>
+                          <div>
+                            <strong style={{ display: 'block', marginBottom: '2px' }}>Personal Baseline Ranges:</strong>
+                            {aiBaseline ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px', color: 'var(--text-muted)' }}>
+                                <span>HR: {Math.round(aiBaseline.normalHeartRateMin)} - {Math.round(aiBaseline.normalHeartRateMax)} BPM</span>
+                                <span>SpO₂ Limit: &le; {Math.round(aiBaseline.normalSpo2Min)}%</span>
+                                <span>Temp: {aiBaseline.normalTemperatureMin.toFixed(1)} - {aiBaseline.normalTemperatureMax.toFixed(1)}°C</span>
+                              </div>
+                            ) : <span>Calculating patient statistics...</span>}
+                          </div>
+                        </div>
+                        {aiAssessment.explanations && (
+                          <div style={{ marginTop: '4px', borderTop: '1px solid #ddd6fe', paddingTop: '8px', fontSize: '11px' }}>
+                            <strong>Key Telemetry Deviations:</strong>
+                            <ul style={{ margin: '4px 0 0 0', paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                              {aiAssessment.explanations.split('; ').map((e, idx) => (
+                                <li key={idx} style={{ color: e.includes('offline') ? 'var(--accent-red)' : 'inherit' }}>{e}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                        <span style={{ fontSize: '9px', color: '#7c3aed', fontStyle: 'italic', marginTop: '4px', display: 'block' }}>
+                          * AI-assisted prediction — Prototype only, not a medical diagnosis.
+                        </span>
+                      </div>
+                    )}
+
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
                       <div>
                         <h4 style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>Medical Profile</h4>
@@ -463,9 +529,15 @@ const HealthcareDashboard = () => {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }} className="saas-grid-layout">
               {/* Queue List */}
               <div className="saas-card">
-                <h3 className="card-title" style={{ marginBottom: '14px' }}>Emergency Alert Queue</h3>
+                <h3 className="card-title" style={{ marginBottom: '14px' }}>🚑 AI Risk Prioritization Queue</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {emergencies.map(eq => (
+                  {[...emergencies].sort((a, b) => {
+                    const aCrit = a.severity === 'CRITICAL';
+                    const bCrit = b.severity === 'CRITICAL';
+                    if (aCrit && !bCrit) return -1;
+                    if (!aCrit && bCrit) return 1;
+                    return (b.riskScore || 0) - (a.riskScore || 0);
+                  }).map(eq => (
                     <div 
                       key={eq.id} 
                       className={`queue-item-card ${selectedEmergency?.id === eq.id ? 'active-select' : ''}`}
@@ -474,9 +546,14 @@ const HealthcareDashboard = () => {
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700 }}>
                         <span>SOS-{eq.id}</span>
-                        <span className={`pill-status ${eq.status === 'HOSPITAL_ASSIGNED' ? 'warning' : 'normal'}`}>{eq.status}</span>
+                        <span className={`pill-status ${eq.severity === 'CRITICAL' ? 'critical' : eq.severity === 'HIGH' ? 'warning' : 'normal'}`}>{eq.severity}</span>
                       </div>
                       <p style={{ fontSize: '12px', marginTop: '4px', color: 'var(--text-secondary)' }}>Symptoms: {eq.symptoms}</p>
+                      
+                      <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed var(--border-color)', paddingTop: '6px' }}>
+                        <span>Unified Risk: <strong>{eq.riskScore || 0}/100</strong></span>
+                        <span>State: <strong>{eq.status}</strong></span>
+                      </div>
                     </div>
                   ))}
                   {emergencies.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>No active alerts.</p>}
