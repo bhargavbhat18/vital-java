@@ -295,6 +295,10 @@ const HealthcareDashboard = () => {
                 <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600 }}>{user?.role}</div>
               </div>
             </div>
+
+            <button onClick={logout} className="nav-logout-btn" title="Sign Out">
+              🚪 Sign Out
+            </button>
           </div>
         </header>
 
