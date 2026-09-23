@@ -22,10 +22,14 @@ public class HospitalRecommendationService {
     }
 
     public List<HospitalRecommendation> getRecommendations(Double lat, Double lng, String departmentName) {
+        if (!validCoordinates(lat, lng)) return List.of();
         List<Hospital> hospitals = hospitalRepository.findAll();
         List<HospitalRecommendation> recommendations = new ArrayList<>();
 
         for (Hospital h : hospitals) {
+            if (!validCoordinates(h.getLat(), h.getLng())
+                    || h.getAvailableBeds() == null || h.getAvailableBeds() <= 0
+                    || h.getAvailableDoctors() == null || h.getAvailableDoctors() <= 0) continue;
             double distance = calculateDistance(lat, lng, h.getLat(), h.getLng());
             double eta = (distance / 50.0) * 60.0 + 3.0; // 50 km/h average speed + 3 mins dispatch buffer
 
@@ -92,15 +96,15 @@ public class HospitalRecommendationService {
             recommendations.add(new HospitalRecommendation(h, distance, eta, finalScore, reasonBuilder.toString().trim()));
         }
 
-        // Sort by score desc, then by distance asc
         return recommendations.stream()
-                .sorted((r1, r2) -> {
-                    if (r2.getScore() != r1.getScore()) {
-                        return Integer.compare(r2.getScore(), r1.getScore());
-                    }
-                    return Double.compare(r1.getDistance(), r2.getDistance());
-                })
+                .sorted(java.util.Comparator.comparingDouble(HospitalRecommendation::getDistance)
+                        .thenComparing(java.util.Comparator.comparingInt(HospitalRecommendation::getScore).reversed()))
                 .collect(Collectors.toList());
+    }
+
+    public static boolean validCoordinates(Double lat, Double lng) {
+        return lat != null && lng != null && Double.isFinite(lat) && Double.isFinite(lng)
+                && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
     }
 
     private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {

@@ -1,124 +1,43 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
-import API from '../services/api';
-import { createStompClient } from '../services/websocket';
+import API, { isActiveEmergency, useApiResource } from '../services/api';
+import { useRealtimeRefresh } from '../services/websocket';
 import MapComponent from '../components/MapComponent';
+import EmergencyDetails from '../components/EmergencyDetails';
 
 const HealthcareDashboard = () => {
   const { user, logout } = useAuth();
-  const role = user?.role; // DOCTOR, HOSPITAL_ADMIN, AMBULANCE_DRIVER, ADMIN
-  
-  const [wsConnected, setWsConnected] = useState(false);
+  const role = user?.role; // DOCTOR, HOSPITAL_ADMIN, AMBULANCE_DRIVER, ADMIN, SYSTEM_ADMIN
+
   const [activeTab, setActiveTab] = useState('');
-  
+
   // Database states
   const [hospitals, setHospitals] = useState([]);
   const [selectedHospital, setSelectedHospital] = useState(null);
   const [departments, setDepartments] = useState([]);
   const [doctors, setDoctors] = useState([]);
   const [ambulances, setAmbulances] = useState([]);
-  const [emergencies, setEmergencies] = useState([]);
-  const [selectedEmergency, setSelectedEmergency] = useState(null);
-
-  // Selected patient telemetry logs
-  const [patientProfile, setPatientProfile] = useState(null);
-  const [patientHistory, setPatientHistory] = useState([]);
-  const [patientVitals, setPatientVitals] = useState(null);
-  const [timelineEvents, setTimelineEvents] = useState([]);
-
-  // AI Insights states
-  const [aiAssessment, setAiAssessment] = useState(null);
-  const [aiBaseline, setAiBaseline] = useState(null);
-
-  const stompClientRef = useRef(null);
+  const [selectedEmergencyId, setSelectedEmergencyId] = useState(null);
+  const [selectedPatientUid, setSelectedPatientUid] = useState(null);
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [currentJob, setCurrentJob] = useState(null);
+  const { connected: wsConnected, revision, refresh } = useRealtimeRefresh(user?.uid, selectedEmergencyId, selectedPatientUid);
+  const { data: queue } = useApiResource(user ? '/hospital/emergencies' : null, revision);
+  const emergencies = Array.isArray(queue) ? queue : [];
+  const selectedEmergency = emergencies.find(emergency => emergency.id === selectedEmergencyId);
+  const activeEmergencies = emergencies.filter(isActiveEmergency);
+  const setSelectedEmergency = emergency => {
+    setSelectedEmergencyId(emergency?.id ?? null);
+    setSelectedPatientUid(emergency?.patientUid ?? null);
+  };
 
   // Set default tabs based on role
   useEffect(() => {
     if (role === 'DOCTOR') setActiveTab('cases');
     else if (role === 'HOSPITAL_ADMIN') setActiveTab('queue');
     else if (role === 'AMBULANCE_DRIVER') setActiveTab('job');
-    else if (role === 'ADMIN') setActiveTab('hospitals');
+    else if (role === 'ADMIN' || role === 'SYSTEM_ADMIN') setActiveTab('hospitals');
   }, [role]);
-
-  useEffect(() => {
-    loadHospitals();
-    loadEmergencies();
-    loadDoctors();
-    loadAmbulances();
-  }, [user]);
-
-  useEffect(() => {
-    if (selectedHospital) {
-      loadHospitalDetails(selectedHospital.name);
-    }
-  }, [selectedHospital]);
-
-  useEffect(() => {
-    if (selectedEmergency) {
-      loadPatientDetails(selectedEmergency.patientUid);
-      loadTimeline(selectedEmergency.id);
-      loadAiData(selectedEmergency.patientUid);
-    }
-  }, [selectedEmergency]);
-
-  const loadAiData = async (patientUid) => {
-    try {
-      const assessmentRes = await API.get(`/ai/patients/${patientUid}/assessment`);
-      if (assessmentRes.status === 200 && assessmentRes.data) {
-        setAiAssessment(assessmentRes.data);
-      } else {
-        setAiAssessment(null);
-      }
-      
-      const baselineRes = await API.get(`/ai/patients/${patientUid}/baseline`);
-      if (baselineRes.status === 200 && baselineRes.data) {
-        setAiBaseline(baselineRes.data);
-      } else {
-        setAiBaseline(null);
-      }
-    } catch (err) {
-      console.error("Failed to load patient AI insights:", err);
-      setAiAssessment(null);
-      setAiBaseline(null);
-    }
-  };
-
-  // STOMP WebSocket Sync
-  useEffect(() => {
-    if (!user) return;
-    
-    const client = createStompClient(
-      () => {
-        setWsConnected(true);
-        console.log('Healthcare WebSocket connected.');
-        
-        client.subscribe('/topic/emergency-updates', (msg) => {
-          const data = JSON.parse(msg.body);
-          loadEmergencies();
-          if (selectedHospital) {
-            loadHospitalDetails(selectedHospital.name);
-          }
-          if (selectedEmergency && selectedEmergency.id === data.id) {
-            setSelectedEmergency(data);
-            loadTimeline(data.id);
-          }
-        });
-      },
-      (err) => {
-        setWsConnected(false);
-        console.error('Healthcare WebSocket connection error:', err);
-      }
-    );
-
-    client.activate();
-    stompClientRef.current = client;
-
-    return () => {
-      if (stompClientRef.current) {
-        stompClientRef.current.deactivate();
-      }
-    };
-  }, [selectedHospital?.id, selectedEmergency?.id]);
 
   const loadHospitals = async () => {
     try {
@@ -127,8 +46,8 @@ const HealthcareDashboard = () => {
       if (res.data.length > 0) {
         setSelectedHospital(res.data[0]);
       }
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setHospitals([]);
     }
   };
 
@@ -136,8 +55,8 @@ const HealthcareDashboard = () => {
     try {
       const res = await API.get(`/hospital/departments/${encodeURIComponent(hospitalName)}`);
       setDepartments(res.data.departments || []);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setDepartments([]);
     }
   };
 
@@ -145,8 +64,8 @@ const HealthcareDashboard = () => {
     try {
       const res = await API.get('/emergencies/doctors/available');
       setDoctors(res.data);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setDoctors([]);
     }
   };
 
@@ -154,43 +73,51 @@ const HealthcareDashboard = () => {
     try {
       const res = await API.get('/emergencies/ambulances/nearby?lat=12.9716&lng=77.5946');
       setAmbulances(res.data);
-    } catch (err) {
-      console.error(err);
+    } catch {
+      setAmbulances([]);
     }
   };
 
-  const loadEmergencies = async () => {
+  const loadDriverData = useCallback(async () => {
     try {
-      const res = await API.get('/hospital/emergencies');
-      setEmergencies(res.data);
-    } catch (err) {
-      console.error(err);
+      // Load current job
+      const jobRes = await API.get('/ambulance/current-job');
+      if (jobRes.data.ambulance) {
+        setCurrentJob(jobRes.data);
+      }
+      // Load pending requests
+      const reqRes = await API.get('/ambulance/pending-requests');
+      setPendingRequests(Array.isArray(reqRes.data) ? reqRes.data : []);
+    } catch (error) {
+      console.error('Failed to load driver data:', error);
     }
-  };
+  }, []);
 
-  const loadPatientDetails = async (uid) => {
-    try {
-      const profRes = await API.get(`/patients/${uid}/medical-profile`);
-      setPatientProfile(profRes.data);
+  const loadEmergencies = refresh;
 
-      const histRes = await API.get(`/patients/${uid}/medical-history`);
-      setPatientHistory(histRes.data);
-
-      const vitalsRes = await API.get(`/analysis/predict/${uid}`);
-      setPatientVitals(vitalsRes.data);
-    } catch (err) {
-      console.error(err);
+  useEffect(() => {
+    if (user) {
+      loadHospitals();
+      loadDoctors();
+      loadAmbulances();
+      if (role === 'AMBULANCE_DRIVER') {
+        loadDriverData();
+      }
     }
-  };
+  }, [user, loadDriverData]);
 
-  const loadTimeline = async (sosId) => {
-    try {
-      const res = await API.get(`/emergencies/${sosId}/timeline`);
-      setTimelineEvents(res.data);
-    } catch (err) {
-      console.error(err);
+  useEffect(() => {
+    if (selectedHospital) {
+      loadHospitalDetails(selectedHospital.name);
     }
-  };
+  }, [selectedHospital]);
+
+  // Refresh driver data when revision changes (WebSocket updates)
+  useEffect(() => {
+    if (role === 'AMBULANCE_DRIVER') {
+      loadDriverData();
+    }
+  }, [revision, loadDriverData]);
 
   const acceptCase = async (id) => {
     try {
@@ -201,8 +128,8 @@ const HealthcareDashboard = () => {
       if (selectedHospital) {
         loadHospitalDetails(selectedHospital.name);
       }
-    } catch (err) {
-      alert('Failed to accept: ' + err.message);
+    } catch (error) {
+      alert('Failed to accept: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -211,15 +138,12 @@ const HealthcareDashboard = () => {
       await API.post(`/emergencies/${id}/resolve`);
       alert('Case marked resolved successfully. Restored resources.');
       setSelectedEmergency(null);
-      setPatientProfile(null);
-      setPatientHistory([]);
-      setPatientVitals(null);
       loadEmergencies();
       loadAmbulances();
       if (selectedHospital) {
         loadHospitalDetails(selectedHospital.name);
       }
-    } catch (err) {
+    } catch {
       alert('Failed to resolve case.');
     }
   };
@@ -234,7 +158,7 @@ const HealthcareDashboard = () => {
     try {
       await API.post('/hospital/doctors/status', updatedDoc);
       loadDoctors();
-    } catch (err) {
+    } catch {
       alert('Failed to update doctor status.');
     }
   };
@@ -254,8 +178,39 @@ const HealthcareDashboard = () => {
       if (selectedHospital) {
         loadHospitalDetails(selectedHospital.name);
       }
-    } catch (err) {
+    } catch {
       alert('Failed to update bed details.');
+    }
+  };
+
+  // Driver functions
+  const acceptRequest = async (requestId) => {
+    try {
+      await API.post(`/ambulance/requests/${requestId}/accept`);
+      alert('Request accepted!');
+      loadDriverData();
+    } catch (error) {
+      alert('Failed to accept: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  const declineRequest = async (requestId) => {
+    try {
+      await API.post(`/ambulance/requests/${requestId}/decline`);
+      alert('Request declined. Next ambulance will be notified.');
+      loadDriverData();
+    } catch (error) {
+      alert('Failed to decline: ' + (error.response?.data?.error || error.message));
+    }
+  };
+
+  const updateAmbulanceStatus = async (status) => {
+    try {
+      await API.post('/ambulance/status', { status });
+      alert(`Status updated to ${status}`);
+      loadDriverData();
+    } catch (error) {
+      alert('Failed to update status: ' + (error.response?.data?.error || error.message));
     }
   };
 
@@ -341,7 +296,7 @@ const HealthcareDashboard = () => {
               <div className="saas-card" style={{ padding: '18px' }}>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>ACTIVE CASES</span>
                 <div style={{ fontSize: '26px', fontWeight: 800, marginTop: '4px' }}>
-                  {emergencies.filter(e => e.status !== 'RESOLVED' && e.status !== 'COMPLETED').length}
+                  {activeEmergencies.length}
                 </div>
               </div>
               <div className="saas-card" style={{ padding: '18px' }}>
@@ -367,7 +322,7 @@ const HealthcareDashboard = () => {
               <div className="saas-card" style={{ maxHeight: '550px', overflowY: 'auto' }}>
                 <h3 className="card-title" style={{ marginBottom: '16px' }}>🚨 Emergency Queue</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {emergencies.filter(e => e.status !== 'RESOLVED' && e.status !== 'COMPLETED').map(eq => (
+                  {activeEmergencies.map(eq => (
                     <div 
                       key={eq.id} 
                       className={`queue-item-card ${selectedEmergency?.id === eq.id ? 'active-select' : ''}`}
@@ -392,94 +347,21 @@ const HealthcareDashboard = () => {
               {/* Patient Snapshot view */}
               <div className="saas-card">
                 {selectedEmergency ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h2 style={{ fontSize: '18px', fontWeight: 800 }}>Incident SOS-{selectedEmergency.id}</h2>
-                      <button onClick={() => resolveCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-green)' }}>
-                        🏁 Mark Case Resolved
-                      </button>
-                    </div>
-
-                    <div style={{ background: '#f8fafc', padding: '16px', borderRadius: '12px', border: '1px solid var(--border-color)' }}>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>TELEMETRY AT CRASH TIME</span>
-                      <p style={{ fontSize: '18px', fontWeight: 800, color: 'var(--accent-red)', marginTop: '4px' }}>
-                        {selectedEmergency.detectedVitals}
-                      </p>
-                      <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '2px' }}>
-                        Risk Score Rating: {selectedEmergency.riskScore}/100 ({selectedEmergency.severity})
-                      </p>
-                    </div>
-
-                    {/* AI Clinical Insights card */}
-                    {aiAssessment && (
-                      <div style={{ background: '#f5f3ff', border: '1px solid #ddd6fe', padding: '16px', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <span style={{ fontSize: '11px', color: '#6d28d9', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                          🧠 AI CLINICAL PREDICTION INSIGHTS
-                        </span>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', fontSize: '12px', marginTop: '4px' }}>
-                          <div>
-                            <p style={{ margin: '2px 0' }}><strong>Unified Risk Score:</strong> {aiAssessment.riskScore}/100 ({aiAssessment.severity})</p>
-                            <p style={{ margin: '2px 0' }}><strong>Deterioration Prob:</strong> {(aiAssessment.deteriorationProbability * 100).toFixed(0)}%</p>
-                            <p style={{ margin: '2px 0' }}><strong>Personalized Anomaly Dev:</strong> {aiAssessment.anomalyScore}/100</p>
-                          </div>
-                          <div>
-                            <strong style={{ display: 'block', marginBottom: '2px' }}>Personal Baseline Ranges:</strong>
-                            {aiBaseline ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', fontSize: '11px', color: 'var(--text-muted)' }}>
-                                <span>HR: {Math.round(aiBaseline.normalHeartRateMin)} - {Math.round(aiBaseline.normalHeartRateMax)} BPM</span>
-                                <span>SpO₂ Limit: &le; {Math.round(aiBaseline.normalSpo2Min)}%</span>
-                                <span>Temp: {aiBaseline.normalTemperatureMin.toFixed(1)} - {aiBaseline.normalTemperatureMax.toFixed(1)}°C</span>
-                              </div>
-                            ) : <span>Calculating patient statistics...</span>}
-                          </div>
-                        </div>
-                        {aiAssessment.explanations && (
-                          <div style={{ marginTop: '4px', borderTop: '1px solid #ddd6fe', paddingTop: '8px', fontSize: '11px' }}>
-                            <strong>Key Telemetry Deviations:</strong>
-                            <ul style={{ margin: '4px 0 0 0', paddingLeft: '18px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                              {aiAssessment.explanations.split('; ').map((e, idx) => (
-                                <li key={idx} style={{ color: e.includes('offline') ? 'var(--accent-red)' : 'inherit' }}>{e}</li>
-                              ))}
-                            </ul>
-                          </div>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        {selectedEmergency.status === 'HOSPITAL_ASSIGNED' && (
+                          <button onClick={() => acceptCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-green)' }}>
+                            ✓ Accept Case & Dispatch
+                          </button>
                         )}
-                        <span style={{ fontSize: '9px', color: '#7c3aed', fontStyle: 'italic', marginTop: '4px', display: 'block' }}>
-                          * AI-assisted prediction — Prototype only, not a medical diagnosis.
-                        </span>
-                      </div>
-                    )}
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                      <div>
-                        <h4 style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>Medical Profile</h4>
-                        {patientProfile ? (
-                          <div style={{ fontSize: '13px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                            <p><strong>Conditions:</strong> {patientProfile.existingConditions || 'None'}</p>
-                            <p><strong>Cardiac History:</strong> {patientProfile.previousHeartProblems || 'None'}</p>
-                            <p><strong>Allergies:</strong> {patientProfile.allergies || 'None'}</p>
-                            <p><strong>Medications:</strong> {patientProfile.currentMedications || 'None'}</p>
-                          </div>
-                        ) : <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No medical context registered.</p>}
-                      </div>
-
-                      <div>
-                        <h4 style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px' }}>Timeline events</h4>
-                        <div className="saas-timeline">
-                          {timelineEvents.map((t, idx) => (
-                            <div key={idx} className="timeline-item">
-                              <div className="timeline-dot-wrapper">
-                                <div className="t-dot" />
-                                {idx < timelineEvents.length - 1 && <div className="t-connector" />}
-                              </div>
-                              <div className="timeline-info">
-                                <span className="timeline-status" style={{ fontSize: '12px' }}>{t.status}</span>
-                                <span className="timeline-time" style={{ fontSize: '9px' }}>{new Date(t.timestamp).toLocaleTimeString()}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
+                        <button onClick={() => resolveCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-green)' }}>
+                          🏁 Mark Case Resolved
+                        </button>
                       </div>
                     </div>
+                    <EmergencyDetails emergencyId={selectedEmergency.id} revision={revision} />
                   </div>
                 ) : (
                   <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '100px 0', fontSize: '13px' }}>
@@ -578,31 +460,7 @@ const HealthcareDashboard = () => {
                       )}
                     </div>
 
-                    <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
-                      <p><strong>Dept Required:</strong> {selectedEmergency.requiredDepartment}</p>
-                      <p><strong>Location Coords:</strong> {selectedEmergency.latitude?.toFixed(4)}, {selectedEmergency.longitude?.toFixed(4)}</p>
-                      <p style={{ gridColumn: 'span 2' }}><strong>Alert Symptoms:</strong> {selectedEmergency.symptoms}</p>
-                    </div>
-
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                      <div>
-                        <h4 style={{ fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>Patient History</h4>
-                        {patientHistory.map((h, idx) => (
-                          <div key={idx} style={{ fontSize: '12px', borderBottom: '1px solid #f1f5f9', paddingBottom: '4px', marginBottom: '4px' }}>
-                            <strong>{h.diagnosis}</strong>: {h.treatment}
-                          </div>
-                        ))}
-                        {patientHistory.length === 0 && <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No logs.</p>}
-                      </div>
-                      <div>
-                        <h4 style={{ fontSize: '12px', fontWeight: 700, marginBottom: '6px' }}>Status Timeline</h4>
-                        {timelineEvents.map((t, idx) => (
-                          <div key={idx} style={{ fontSize: '11px', marginBottom: '2px' }}>
-                            • [{t.status}] {t.description}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <EmergencyDetails emergencyId={selectedEmergency.id} revision={revision} />
                   </div>
                 ) : <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '80px 0', fontSize: '13px' }}>Select an active emergency card to view details.</p>}
               </div>
@@ -690,6 +548,8 @@ const HealthcareDashboard = () => {
                         ambulanceLoc={[12.935, 77.61]}
                       />
                     </div>
+
+                    <EmergencyDetails emergencyId={activeJob.id} revision={revision} />
 
                     <button onClick={() => resolveCase(activeJob.id)} className="btn-primary" style={{ width: '100%', padding: '14px', background: 'var(--accent-green)' }}>
                       ✓ Complete Route & Arrive at Hospital

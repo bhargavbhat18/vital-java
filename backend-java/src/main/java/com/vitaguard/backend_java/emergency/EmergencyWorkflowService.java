@@ -2,6 +2,7 @@ package com.vitaguard.backend_java.emergency;
 
 import com.vitaguard.backend_java.ambulance.Ambulance;
 import com.vitaguard.backend_java.ambulance.AmbulanceRepository;
+import com.vitaguard.backend_java.ambulance.AmbulanceService;
 import com.vitaguard.backend_java.doctor.Doctor;
 import com.vitaguard.backend_java.doctor.DoctorRepository;
 import com.vitaguard.backend_java.hospital.*;
@@ -33,6 +34,7 @@ public class EmergencyWorkflowService {
     private final HospitalRecommendationService recommendationService;
     private final DoctorRepository doctorRepository;
     private final AmbulanceRepository ambulanceRepository;
+    private final AmbulanceService ambulanceService;
     private final UserRepository userRepository;
     private final FamilyNotificationService familyNotificationService;
     private final SimpMessagingTemplate messagingTemplate;
@@ -46,6 +48,7 @@ public class EmergencyWorkflowService {
             HospitalRecommendationService recommendationService,
             DoctorRepository doctorRepository,
             AmbulanceRepository ambulanceRepository,
+            AmbulanceService ambulanceService,
             UserRepository userRepository,
             FamilyNotificationService familyNotificationService,
             SimpMessagingTemplate messagingTemplate,
@@ -58,6 +61,7 @@ public class EmergencyWorkflowService {
         this.recommendationService = recommendationService;
         this.doctorRepository = doctorRepository;
         this.ambulanceRepository = ambulanceRepository;
+        this.ambulanceService = ambulanceService;
         this.userRepository = userRepository;
         this.familyNotificationService = familyNotificationService;
         this.messagingTemplate = messagingTemplate;
@@ -128,122 +132,10 @@ public class EmergencyWorkflowService {
         request.setStatus("AMBULANCE_REQUESTED");
         emergencyRepository.save(request);
         logEvent(request.getId(), "AMBULANCE_REQUESTED", "Emergency ambulance request raised.");
+        broadcastWorkflowUpdate(request);
 
-        // Find nearest available ambulance
-        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("available");
-        if (availableAmbulances.isEmpty()) {
-            logEvent(request.getId(), "AMBULANCE_REQUESTED", "No available ambulance nearby. Dispatch queued.");
-            broadcastWorkflowUpdate(request);
-            return;
-        }
-
-        Ambulance nearest = null;
-        double minDistance = Double.MAX_VALUE;
-        for (Ambulance amb : availableAmbulances) {
-            double dist = calculateDistance(request.getLatitude(), request.getLongitude(), amb.getLatitude(), amb.getLongitude());
-            if (dist < minDistance) {
-                minDistance = dist;
-                nearest = amb;
-            }
-        }
-
-        if (nearest != null) {
-            nearest.setStatus("busy");
-            ambulanceRepository.save(nearest);
-
-            request.setAmbulanceId(nearest.getId());
-            request.setStatus("AMBULANCE_DISPATCHED");
-            request.setAmbulanceDispatched(true);
-            emergencyRepository.save(request);
-
-            double dist = calculateDistance(request.getLatitude(), request.getLongitude(), nearest.getLatitude(), nearest.getLongitude());
-            double eta = (dist / 40.0) * 60.0 + 1.0; // Simulated ambulance speed
-
-            logEvent(request.getId(), "AMBULANCE_DISPATCHED", "Ambulance " + nearest.getUnitId() + " dispatched. Dist: " + String.format("%.2f", dist) + " km, ETA: " + String.format("%.1f", eta) + " mins");
-            
-            // Notify family contacts about dispatch details
-            familyNotificationService.sendFamilyNotification(
-                    request,
-                    request.getDetectedVitals(),
-                    "Dispatched",
-                    String.format("%.1f mins", eta)
-            );
-
-            broadcastWorkflowUpdate(request);
-
-            // Trigger real-time tracking simulation
-            runAmbulanceSimulation(request, nearest);
-        }
-    }
-
-    private void runAmbulanceSimulation(EmergencyRequest request, Ambulance ambulance) {
-        CompletableFuture.runAsync(() -> {
-            try {
-                request.setStatus("AMBULANCE_EN_ROUTE");
-                emergencyRepository.save(request);
-                logEvent(request.getId(), "AMBULANCE_EN_ROUTE", "Ambulance en route to patient location.");
-                broadcastWorkflowUpdate(request);
-
-                Double startLat = ambulance.getLatitude();
-                Double startLng = ambulance.getLongitude();
-                Double destLat = request.getLatitude();
-                Double destLng = request.getLongitude();
-
-                int steps = 10;
-                for (int step = 1; step <= steps; step++) {
-                    Thread.sleep(3000); // 3 seconds per step
-                    
-                    // Reload request & check if cancelled
-                    Optional<EmergencyRequest> reloadedOpt = emergencyRepository.findById(request.getId());
-                    if (reloadedOpt.isPresent() && Boolean.TRUE.equals(reloadedOpt.get().getCancelled())) {
-                        logEvent(request.getId(), "CANCELLED", "Tracking cancelled: Emergency request was aborted.");
-                        ambulance.setStatus("available");
-                        ambulanceRepository.save(ambulance);
-                        return;
-                    }
-
-                    double fraction = (double) step / steps;
-                    Double currentLat = startLat + (destLat - startLat) * fraction;
-                    Double currentLng = startLng + (destLng - startLng) * fraction;
-
-                    ambulance.setLatitude(currentLat);
-                    ambulance.setLongitude(currentLng);
-                    ambulanceRepository.save(ambulance);
-
-                    // Broadcast tracking position update
-                    Map<String, Object> trackingPayload = new HashMap<>();
-                    trackingPayload.put("sosId", request.getId());
-                    trackingPayload.put("status", request.getStatus());
-                    trackingPayload.put("ambulanceLatitude", currentLat);
-                    trackingPayload.put("ambulanceLongitude", currentLng);
-                    trackingPayload.put("progress", fraction);
-                    trackingPayload.put("eta", String.format("%.1f mins", (1.0 - fraction) * 5.0));
-                    messagingTemplate.convertAndSend("/topic/emergency/" + request.getId(), (Object) trackingPayload);
-
-                    if (step == steps / 2) {
-                        request.setStatus("PATIENT_PICKED_UP");
-                        emergencyRepository.save(request);
-                        logEvent(request.getId(), "PATIENT_PICKED_UP", "Patient picked up by ambulance.");
-                        broadcastWorkflowUpdate(request);
-                    }
-                }
-
-                // Step: Arrived at Hospital
-                request.setStatus("ARRIVED_AT_HOSPITAL");
-                emergencyRepository.save(request);
-                logEvent(request.getId(), "ARRIVED_AT_HOSPITAL", "Ambulance arrived at the assigned hospital.");
-                broadcastWorkflowUpdate(request);
-
-                // Simulation delay inside hospital
-                Thread.sleep(4000);
-
-                // Auto-resolve case
-                resolveEmergency(request.getId());
-
-            } catch (Exception e) {
-                System.err.println("Error in ambulance tracking simulator: " + e.getMessage());
-            }
-        });
+        // Use new Uber-style ambulance request system
+        ambulanceService.requestNearestAmbulance(request);
     }
 
     public void resolveEmergency(Long id) {
@@ -268,7 +160,8 @@ public class EmergencyWorkflowService {
             // Release ambulance
             if (req.getAmbulanceId() != null) {
                 ambulanceRepository.findById(req.getAmbulanceId()).ifPresent(amb -> {
-                    amb.setStatus("available");
+                    amb.setStatus("AVAILABLE");
+                    amb.setCurrentEmergencyId(null);
                     ambulanceRepository.save(amb);
                 });
             }
@@ -307,7 +200,8 @@ public class EmergencyWorkflowService {
             // Release ambulance
             if (req.getAmbulanceId() != null) {
                 ambulanceRepository.findById(req.getAmbulanceId()).ifPresent(amb -> {
-                    amb.setStatus("available");
+                    amb.setStatus("AVAILABLE");
+                    amb.setCurrentEmergencyId(null);
                     ambulanceRepository.save(amb);
                 });
             }

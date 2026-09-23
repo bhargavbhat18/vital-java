@@ -8,6 +8,8 @@ import com.vitaguard.backend_java.hospital.Hospital;
 import com.vitaguard.backend_java.hospital.HospitalDepartment;
 import com.vitaguard.backend_java.hospital.HospitalDepartmentRepository;
 import com.vitaguard.backend_java.hospital.HospitalRepository;
+import com.vitaguard.backend_java.user.PatientFamilyRelationship;
+import com.vitaguard.backend_java.user.PatientFamilyRelationshipRepository;
 import com.vitaguard.backend_java.user.User;
 import com.vitaguard.backend_java.user.UserRepository;
 import org.springframework.boot.CommandLineRunner;
@@ -24,6 +26,7 @@ public class DatabaseSeeder implements CommandLineRunner {
     private final DoctorRepository doctorRepository;
     private final AmbulanceRepository ambulanceRepository;
     private final UserRepository userRepository;
+    private final PatientFamilyRelationshipRepository relationshipRepository;
     private final PasswordEncoder passwordEncoder;
 
     public DatabaseSeeder(
@@ -32,6 +35,7 @@ public class DatabaseSeeder implements CommandLineRunner {
             DoctorRepository doctorRepository,
             AmbulanceRepository ambulanceRepository,
             UserRepository userRepository,
+            PatientFamilyRelationshipRepository relationshipRepository,
             PasswordEncoder passwordEncoder
     ) {
         this.hospitalRepository = hospitalRepository;
@@ -39,22 +43,84 @@ public class DatabaseSeeder implements CommandLineRunner {
         this.doctorRepository = doctorRepository;
         this.ambulanceRepository = ambulanceRepository;
         this.userRepository = userRepository;
+        this.relationshipRepository = relationshipRepository;
         this.passwordEncoder = passwordEncoder;
     }
 
     @Override
     public void run(String... args) throws Exception {
-        // Seed default user for testing
+        // Seed default patient user for testing
+        User patient = null;
         if (!userRepository.existsByUid("LKT01")) {
-            User testUser = new User("LKT01", "patient@vitaguard.com", passwordEncoder.encode("password"), "PATIENT");
-            testUser.setFullName("Rahul Sharma");
-            testUser.setAge(45);
-            testUser.setBloodGroup("O+");
-            testUser.setAddress("Bangalore City Center");
-            testUser.setLatitude(12.9716);
-            testUser.setLongitude(77.5946);
-            userRepository.save(testUser);
-            System.out.println("[SEED] Test user LKT01 seeded successfully.");
+            patient = new User("LKT01", "patient@vitaguard.com", passwordEncoder.encode("password"), "PATIENT");
+            patient.setFullName("Rahul Sharma");
+            patient.setAge(45);
+            patient.setBloodGroup("O+");
+            patient.setAddress("Bangalore City Center");
+            patient.setLatitude(12.9716);
+            patient.setLongitude(77.5946);
+            userRepository.save(patient);
+            System.out.println("[SEED] Test patient LKT01 seeded successfully.");
+        } else {
+            patient = userRepository.findByUid("LKT01").orElse(null);
+        }
+
+        // Seed family member
+        User familyMember = null;
+        if (!userRepository.existsByEmail("family@vitaguard.com")) {
+            familyMember = new User("FAM_01", "family@vitaguard.com", passwordEncoder.encode("password"), "FAMILY_MEMBER");
+            familyMember.setFullName("Priya Sharma");
+            familyMember.setAge(40);
+            familyMember.setAddress("Bangalore City Center");
+            userRepository.save(familyMember);
+            System.out.println("[SEED] Test family member seeded successfully.");
+        } else {
+            familyMember = userRepository.findByEmail("family@vitaguard.com").orElse(null);
+        }
+
+        // Seed doctor user
+        User doctorUser = null;
+        if (!userRepository.existsByEmail("doctor@vitaguard.com")) {
+            doctorUser = new User("DOC_01", "doctor@vitaguard.com", passwordEncoder.encode("password"), "DOCTOR");
+            doctorUser.setFullName("Dr. Anirudh Kulkarni");
+            doctorUser.setAge(40);
+            userRepository.save(doctorUser);
+            System.out.println("[SEED] Test doctor user seeded successfully.");
+        } else {
+            doctorUser = userRepository.findByEmail("doctor@vitaguard.com").orElse(null);
+        }
+
+        // Seed hospital admin user
+        User hospitalAdmin = null;
+        if (!userRepository.existsByEmail("admin@apollo.com")) {
+            hospitalAdmin = new User("HSP_01", "admin@apollo.com", passwordEncoder.encode("password"), "HOSPITAL_ADMIN");
+            hospitalAdmin.setFullName("Apollo Admin");
+            userRepository.save(hospitalAdmin);
+            System.out.println("[SEED] Test hospital admin seeded successfully.");
+        } else {
+            hospitalAdmin = userRepository.findByEmail("admin@apollo.com").orElse(null);
+        }
+
+        // Seed ambulance driver user
+        User driverUser = null;
+        if (!userRepository.existsByEmail("driver@vitaguard.com")) {
+            driverUser = new User("AMB_01", "driver@vitaguard.com", passwordEncoder.encode("password"), "AMBULANCE_DRIVER");
+            driverUser.setFullName("Rajesh Kumar");
+            userRepository.save(driverUser);
+            System.out.println("[SEED] Test ambulance driver seeded successfully.");
+        } else {
+            driverUser = userRepository.findByEmail("driver@vitaguard.com").orElse(null);
+        }
+
+        // Seed system admin user
+        User sysAdmin = null;
+        if (!userRepository.existsByEmail("sysadmin@vitaguard.com")) {
+            sysAdmin = new User("SYS_01", "sysadmin@vitaguard.com", passwordEncoder.encode("password"), "SYSTEM_ADMIN");
+            sysAdmin.setFullName("System Admin");
+            userRepository.save(sysAdmin);
+            System.out.println("[SEED] Test system admin seeded successfully.");
+        } else {
+            sysAdmin = userRepository.findByEmail("sysadmin@vitaguard.com").orElse(null);
         }
 
         if (hospitalRepository.count() == 0) {
@@ -62,9 +128,22 @@ public class DatabaseSeeder implements CommandLineRunner {
             Hospital apollo = new Hospital("Apollo Hospital", 12.9252, 77.6011, 100, 85, 30, 12, 4.8);
             hospitalRepository.save(apollo);
             seedDepartments(apollo, List.of("Cardiology", "Trauma", "General Medicine", "Emergency"));
-            seedDoctor(apollo, "Dr. Anirudh Kulkarni", "9880123456", "Cardiology", "Cardiology");
-            seedDoctor(apollo, "Dr. Sarah D'souza", "9880654321", "Trauma Care", "Trauma");
-            seedDoctor(apollo, "Dr. Ramesh Babu", "9887766554", "Internal Medicine", "General Medicine");
+            
+            Doctor doc1 = seedDoctor(apollo, "Dr. Anirudh Kulkarni", "9880123456", "Cardiology", "Cardiology");
+            Doctor doc2 = seedDoctor(apollo, "Dr. Sarah D'souza", "9880654321", "Trauma Care", "Trauma");
+            Doctor doc3 = seedDoctor(apollo, "Dr. Ramesh Babu", "9887766554", "Internal Medicine", "General Medicine");
+
+            // Link doctor user to doctor profile
+            if (doctorUser != null && doc1 != null) {
+                doctorUser.setHospitalId(apollo.getId());
+                userRepository.save(doctorUser);
+            }
+
+            // Link hospital admin to hospital
+            if (hospitalAdmin != null) {
+                hospitalAdmin.setHospitalId(apollo.getId());
+                userRepository.save(hospitalAdmin);
+            }
 
             // Seed Fortis Hospital
             Hospital fortis = new Hospital("Fortis Hospital", 12.9611, 77.6387, 80, 40, 25, 18, 4.5);
@@ -101,15 +180,46 @@ public class DatabaseSeeder implements CommandLineRunner {
             System.out.println("[SEED] Seeded 5 hospitals, departments, and doctors successfully.");
         }
 
+        // Link hospital admin to Apollo Hospital
+        Hospital apollo = hospitalRepository.findByName("Apollo Hospital").orElse(null);
+        if (apollo != null && hospitalAdmin != null) {
+            hospitalAdmin.setHospitalId(apollo.getId());
+            userRepository.save(hospitalAdmin);
+        }
+
         if (ambulanceRepository.count() == 0) {
             // Seed ambulances located initially at respective hospitals
-            ambulanceRepository.save(new Ambulance("AMB-01", "Apollo Hospital", 12.9252, 77.6011));
-            ambulanceRepository.save(new Ambulance("AMB-02", "Fortis Hospital", 12.9611, 77.6387));
-            ambulanceRepository.save(new Ambulance("AMB-03", "Manipal Hospital", 12.9591, 77.6473));
-            ambulanceRepository.save(new Ambulance("AMB-04", "Narayana Health", 12.8938, 77.5949));
-            ambulanceRepository.save(new Ambulance("AMB-05", "St. John's Hospital", 12.9353, 77.6174));
+            Ambulance amb1 = new Ambulance("AMB-01", "Apollo Hospital", 12.9252, 77.6011);
+            Ambulance amb2 = new Ambulance("AMB-02", "Fortis Hospital", 12.9611, 77.6387);
+            Ambulance amb3 = new Ambulance("AMB-03", "Manipal Hospital", 12.9591, 77.6473);
+            Ambulance amb4 = new Ambulance("AMB-04", "Narayana Health", 12.8938, 77.5949);
+            Ambulance amb5 = new Ambulance("AMB-05", "St. John's Hospital", 12.9353, 77.6174);
+
+            ambulanceRepository.save(amb1);
+            ambulanceRepository.save(amb2);
+            ambulanceRepository.save(amb3);
+            ambulanceRepository.save(amb4);
+            ambulanceRepository.save(amb5);
+
+            // Link driver to ambulance
+            if (driverUser != null && amb1 != null) {
+                amb1.setDriver(driverUser);
+                driverUser.setAmbulanceId(amb1.getId());
+                ambulanceRepository.save(amb1);
+                userRepository.save(driverUser);
+            }
 
             System.out.println("[SEED] Seeded 5 ambulances successfully.");
+        }
+
+        // Create family-patient relationship
+        if (patient != null && familyMember != null) {
+            if (!relationshipRepository.existsByPatientIdAndFamilyUserIdAndActiveTrue(patient.getId(), familyMember.getId())) {
+                PatientFamilyRelationship rel = new PatientFamilyRelationship(
+                        patient, familyMember, "Spouse", "9876543210", true);
+                relationshipRepository.save(rel);
+                System.out.println("[SEED] Family-patient relationship created successfully.");
+            }
         }
     }
 
@@ -133,8 +243,9 @@ public class DatabaseSeeder implements CommandLineRunner {
         }
     }
 
-    private void seedDoctor(Hospital hospital, String name, String phone, String specialization, String depName) {
+    private Doctor seedDoctor(Hospital hospital, String name, String phone, String specialization, String depName) {
         Doctor doc = new Doctor(hospital, name, phone, specialization, depName, true, true);
         doctorRepository.save(doc);
+        return doc;
     }
 }

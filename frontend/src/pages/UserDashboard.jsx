@@ -1,11 +1,11 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import API from '../services/api';
-import { createStompClient } from '../services/websocket';
+import API, { isActiveEmergency, useApiResource } from '../services/api';
+import { useRealtimeRefresh } from '../services/websocket';
 import MapComponent from '../components/MapComponent';
 
 // Custom SVG Line Chart Component for React
-const SVGLineChart = ({ data, color, title, unit, minValDefault, maxValDefault }) => {
+const SVGLineChart = ({ data, color, minValDefault, maxValDefault }) => {
   if (!data || data.length === 0) {
     return <div style={{ padding: '40px', color: '#94a3b8', fontSize: '13px', textAlign: 'center' }}>No historical metrics loaded.</div>;
   }
@@ -63,12 +63,12 @@ const SVGLineChart = ({ data, color, title, unit, minValDefault, maxValDefault }
 const UserDashboard = () => {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('vitals');
-  const [wsConnected, setWsConnected] = useState(false);
-  
-  // Vitals State
-  const [vitalsHistory, setVitalsHistory] = useState([]);
-  const [latestVital, setLatestVital] = useState(null);
-  const [trendAnalysis, setTrendAnalysis] = useState(null);
+  const [trackedEmergencyId, setTrackedEmergencyId] = useState(null);
+  const { connected: wsConnected, revision, refresh, tracking: trackingData } = useRealtimeRefresh(user?.uid, trackedEmergencyId);
+  const { data: storedVitals } = useApiResource('/vitals/history', revision);
+  const vitalsHistory = Array.isArray(storedVitals) ? storedVitals : [];
+  const latestVital = vitalsHistory[0] ?? null;
+  const { data: trendAnalysis } = useApiResource(user ? `/analysis/predict/${user.uid}` : null, revision);
   
   // Sim Mode States
   const [simulating, setSimulating] = useState(false);
@@ -88,22 +88,15 @@ const UserDashboard = () => {
   // SOS state
   const [symptomList, setSymptomList] = useState([]);
   const [symptomDesc, setSymptomDesc] = useState('');
-  const [activeSos, setActiveSos] = useState(null);
-  const [trackingData, setTrackingData] = useState(null);
-  
-  // Active SOS detail objects
-  const [assignedHospital, setAssignedHospital] = useState(null);
-  const [assignedDoctor, setAssignedDoctor] = useState(null);
-  const [timelineEvents, setTimelineEvents] = useState([]);
-
-  // Medical records state
-  const [medHistory, setMedHistory] = useState([]);
-  const [medProfile, setMedProfile] = useState(null);
-
-  // Past Emergencies History
-  const [pastEmergencies, setPastEmergencies] = useState([]);
+  const { data: activeQueue } = useApiResource('/emergency/active', revision);
+  const activeSos = Array.isArray(activeQueue) ? activeQueue.find(isActiveEmergency) : null;
+  const activeId = activeSos?.id ?? null;
+  if (trackedEmergencyId !== activeId) setTrackedEmergencyId(activeId);
+  const { data: assignedHospital } = useApiResource(activeId != null ? `/emergencies/${activeId}/hospital` : null, revision);
+  const { data: assignedDoctor } = useApiResource(activeId != null ? `/emergencies/${activeId}/doctor` : null, revision);
+  const { data: emergencyHistory } = useApiResource('/hospital/emergencies', revision);
+  const pastEmergencies = Array.isArray(emergencyHistory) ? emergencyHistory : [];
   const [selectedPastSos, setSelectedPastSos] = useState(null);
-  const [pastTimelineEvents, setPastTimelineEvents] = useState([]);
 
   // Telehealth Chat
   const [chatMessages, setChatMessages] = useState([
@@ -119,209 +112,19 @@ const UserDashboard = () => {
   const [aiAssessment, setAiAssessment] = useState(null);
   const [aiBaseline, setAiBaseline] = useState(null);
 
-  const stompClientRef = useRef(null);
-
-  useEffect(() => {
-    loadVitals();
-    loadMedicalHistory();
-    loadMedicalProfile();
-    checkActiveSos();
-    loadPastEmergencies();
-    loadAiData();
-  }, [user]);
-
-  const loadAiData = async () => {
-    if (!user) return;
-    try {
-      const assessmentRes = await API.get(`/ai/patients/${user.uid}/assessment`);
-      if (assessmentRes.status === 200 && assessmentRes.data) {
-        setAiAssessment(assessmentRes.data);
-      }
-      
-      const baselineRes = await API.get(`/ai/patients/${user.uid}/baseline`);
-      if (baselineRes.status === 200 && baselineRes.data) {
-        setAiBaseline(baselineRes.data);
-      }
-    } catch (err) {
-      console.error("Failed to load AI predictive metrics:", err);
-    }
-  };
-
-  // WebSocket Subscription
   useEffect(() => {
     if (!user) return;
-    
-    const client = createStompClient(
-      () => {
-        setWsConnected(true);
-        console.log('User STOMP connected.');
-        
-        // Live vitals stream
-        client.subscribe(`/topic/vitals/${user.uid}`, (msg) => {
-          const vital = JSON.parse(msg.body);
-          setLatestVital(vital);
-          setVitalsHistory(prev => [vital, ...prev]);
-          loadTrendAnalysis();
-          loadAiData();
-        });
-
-        // AI Risk stream
-        client.subscribe(`/topic/ai-risk/${user.uid}`, (msg) => {
-          const assessment = JSON.parse(msg.body);
-          setAiAssessment(assessment);
-        });
-
-        // Family notification alerts
-        client.subscribe(`/topic/family-notifications/${user.uid}`, (msg) => {
-          const data = JSON.parse(msg.body);
-          console.log('[WS Family Notify]', data);
-          alert(`👨👩👦 Family Notification Sent: Patient ${data.patientName} is under ${data.severity} emergency. Destination: ${data.hospital}.`);
-        });
-
-        if (activeSos) {
-          subscribeToSosTracking(client, activeSos.id);
-        }
-      },
-      (err) => {
-        setWsConnected(false);
-        console.error('STOMP connection error:', err);
-      }
-    );
-
-    client.activate();
-    stompClientRef.current = client;
-
+    let cancelled = false;
+    API.get(`/ai/patients/${user.uid}/assessment`).then(res => {
+      if (!cancelled && res.status === 200 && res.data) setAiAssessment(res.data);
+    }).catch(() => {});
+    API.get(`/ai/patients/${user.uid}/baseline`).then(res => {
+      if (!cancelled && res.status === 200 && res.data) setAiBaseline(res.data);
+    }).catch(() => {});
     return () => {
-      if (stompClientRef.current) {
-        stompClientRef.current.deactivate();
-      }
+      cancelled = true;
     };
-  }, [user, activeSos?.id]);
-
-  const subscribeToSosTracking = (client, sosId) => {
-    client.subscribe(`/topic/emergency/${sosId}`, (msg) => {
-      const data = JSON.parse(msg.body);
-      setTrackingData(data);
-      loadTimeline(sosId);
-      loadAssignedHospital(sosId);
-      loadAssignedDoctor(sosId);
-
-      if (data.status === 'RESOLVED' || data.status === 'COMPLETED') {
-        alert('Emergency has been resolved and resources released successfully.');
-        checkActiveSos();
-        loadPastEmergencies();
-      }
-    });
-  };
-
-  const loadVitals = async () => {
-    try {
-      const res = await API.get('/vitals/history');
-      setVitalsHistory(res.data);
-      if (res.data.length > 0) {
-        setLatestVital(res.data[0]);
-      }
-      loadTrendAnalysis();
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadTrendAnalysis = async () => {
-    if (!user) return;
-    try {
-      const res = await API.get(`/analysis/predict/${user.uid}`);
-      setTrendAnalysis(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadMedicalHistory = async () => {
-    try {
-      const res = await API.get('/patients/me/medical-history');
-      setMedHistory(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadMedicalProfile = async () => {
-    try {
-      const res = await API.get('/patients/me/medical-profile');
-      setMedProfile(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const checkActiveSos = async () => {
-    try {
-      const res = await API.get('/emergency/active');
-      const myActive = res.data.find(req => req.patientUid === user.uid);
-      if (myActive) {
-        setActiveSos(myActive);
-        setTrackingData({
-          sosId: myActive.id,
-          status: myActive.status,
-          ambulanceLatitude: myActive.latitude,
-          ambulanceLongitude: myActive.longitude,
-          progress: 0.0,
-          eta: 'Calculating...'
-        });
-        loadTimeline(myActive.id);
-        loadAssignedHospital(myActive.id);
-        loadAssignedDoctor(myActive.id);
-      } else {
-        setActiveSos(null);
-        setTrackingData(null);
-        setAssignedHospital(null);
-        setAssignedDoctor(null);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadPastEmergencies = async () => {
-    try {
-      const res = await API.get('/hospital/emergencies');
-      setPastEmergencies(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadTimeline = async (sosId) => {
-    try {
-      const res = await API.get(`/emergencies/${sosId}/timeline`);
-      setTimelineEvents(res.data);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadAssignedHospital = async (sosId) => {
-    try {
-      const res = await API.get(`/emergencies/${sosId}/hospital`);
-      if (res.status === 200 && res.data) {
-        setAssignedHospital(res.data);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const loadAssignedDoctor = async (sosId) => {
-    try {
-      const res = await API.get(`/emergencies/${sosId}/doctor`);
-      if (res.status === 200 && res.data) {
-        setAssignedDoctor(res.data);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-  };
+  }, [user]);
 
   const postVital = async (e) => {
     e.preventDefault();
@@ -332,8 +135,8 @@ const UserDashboard = () => {
         longitude: user.longitude || 77.5946
       });
       alert('Vitals logged successfully.');
-      loadVitals();
-    } catch (err) {
+      refresh();
+    } catch {
       alert('Failed to log vitals.');
     }
   };
@@ -365,17 +168,16 @@ const UserDashboard = () => {
 
   const executeSosTrigger = async (lat, lng) => {
     try {
-      const res = await API.post('/emergency/sos', {
+      await API.post('/emergency/sos', {
         alert_message: symptomList.join(', '),
         description: symptomDesc,
         symptoms: symptomList,
         location: { lat, lng }
       });
-      setActiveSos(res.data);
       setActiveTab('sos');
-      checkActiveSos();
+      refresh();
       alert('Emergency Alert Dispatched! Nearest hospital assigned.');
-    } catch (err) {
+    } catch {
       alert('SOS Trigger Failed.');
     }
   };
@@ -392,7 +194,7 @@ const UserDashboard = () => {
         latitude: user.latitude || 12.9716,
         longitude: user.longitude || 77.5946
       });
-      loadVitals();
+      refresh();
 
       await new Promise(r => setTimeout(r, 2000));
       setSimStep('Step 2: Detecting elevated anomalies...');
@@ -404,7 +206,7 @@ const UserDashboard = () => {
         latitude: user.latitude || 12.9716,
         longitude: user.longitude || 77.5946
       });
-      loadVitals();
+      refresh();
 
       await new Promise(r => setTimeout(r, 2000));
       setSimStep('Step 3: Vitals crash. Triggering critical AI analysis...');
@@ -416,20 +218,19 @@ const UserDashboard = () => {
         latitude: user.latitude || 12.9716,
         longitude: user.longitude || 77.5946
       });
-      loadVitals();
+      refresh();
 
       setSimStep('Step 4: AI triage matched CRITICAL severity. Emergency created!');
       
       setTimeout(() => {
-        checkActiveSos();
+        refresh();
         setActiveTab('sos');
         setSimulating(false);
         setSimStep('');
       }, 1500);
 
-    } catch (err) {
-      console.error(err);
-      alert('Simulation failed: ' + (err.response?.data?.error || err.message));
+    } catch (error) {
+      alert('Simulation failed: ' + (error.response?.data?.error || error.message));
       setSimulating(false);
       setSimStep('');
     }
@@ -764,8 +565,6 @@ const UserDashboard = () => {
                   <SVGLineChart
                     data={vitalsHistory.map(v => activeChartMetric === 'hr' ? v.heartRate : activeChartMetric === 'spo2' ? v.spo2 : v.temperature)}
                     color={activeChartMetric === 'hr' ? 'var(--accent-red)' : activeChartMetric === 'spo2' ? 'var(--accent-blue)' : 'var(--accent-amber)'}
-                    title={activeChartMetric.toUpperCase()}
-                    unit={activeChartMetric === 'temp' ? '°C' : activeChartMetric === 'spo2' ? '%' : 'BPM'}
                     minValDefault={activeChartMetric === 'hr' ? 60 : activeChartMetric === 'spo2' ? 90 : 36}
                     maxValDefault={activeChartMetric === 'hr' ? 100 : activeChartMetric === 'spo2' ? 100 : 38}
                   />
@@ -1086,8 +885,8 @@ const UserDashboard = () => {
                               try {
                                 const res = await API.get(`/emergencies/${pe.id}/timeline`);
                                 setPastTimelineEvents(res.data);
-                              } catch (err) {
-                                console.error(err);
+                              } catch {
+                                setPastTimelineEvents([]);
                               }
                             }} 
                             className="btn-primary" 

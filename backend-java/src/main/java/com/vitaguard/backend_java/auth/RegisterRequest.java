@@ -3,7 +3,7 @@ package com.vitaguard.backend_java.auth;
 public class RegisterRequest {
     private String email;
     private String password;
-    private String role; // PATIENT, FAMILY_MEMBER, DOCTOR, HOSPITAL_ADMIN
+    private String role; // PATIENT, FAMILY_MEMBER, DOCTOR, HOSPITAL_ADMIN, AMBULANCE_DRIVER, SYSTEM_ADMIN
     private String fullName;
     private Integer age;
     private String bloodGroup;

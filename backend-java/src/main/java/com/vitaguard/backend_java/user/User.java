@@ -26,7 +26,7 @@ public class User implements UserDetails {
     private String password; // hashed password
 
     @Column(nullable = false)
-    private String role; // PATIENT, FAMILY_MEMBER, DOCTOR, HOSPITAL_ADMIN
+    private String role; // PATIENT, FAMILY_MEMBER, DOCTOR, HOSPITAL_ADMIN, AMBULANCE_DRIVER, SYSTEM_ADMIN
 
     private String fullName;
     private Integer age;
@@ -44,6 +44,20 @@ public class User implements UserDetails {
     @OneToMany(mappedBy = "user", cascade = CascadeType.ALL, orphanRemoval = true)
     @com.fasterxml.jackson.annotation.JsonManagedReference
     private List<FamilyMember> familyMembers = new java.util.ArrayList<>();
+
+    @OneToMany(mappedBy = "patient", cascade = CascadeType.ALL, orphanRemoval = true)
+    @com.fasterxml.jackson.annotation.JsonManagedReference("patient-relationships")
+    private List<PatientFamilyRelationship> patientRelationships = new java.util.ArrayList<>();
+
+    @OneToMany(mappedBy = "familyUser", cascade = CascadeType.ALL, orphanRemoval = true)
+    @com.fasterxml.jackson.annotation.JsonManagedReference("family-relationships")
+    private List<PatientFamilyRelationship> familyRelationships = new java.util.ArrayList<>();
+
+    // For HOSPITAL_ADMIN and DOCTOR - link to their hospital
+    private Long hospitalId;
+
+    // For AMBULANCE_DRIVER - link to their ambulance
+    private Long ambulanceId;
 
     public User() {}
 
@@ -102,6 +116,18 @@ public class User implements UserDetails {
 
     public List<FamilyMember> getFamilyMembers() { return familyMembers; }
     public void setFamilyMembers(List<FamilyMember> familyMembers) { this.familyMembers = familyMembers; }
+
+    public List<PatientFamilyRelationship> getPatientRelationships() { return patientRelationships; }
+    public void setPatientRelationships(List<PatientFamilyRelationship> patientRelationships) { this.patientRelationships = patientRelationships; }
+
+    public List<PatientFamilyRelationship> getFamilyRelationships() { return familyRelationships; }
+    public void setFamilyRelationships(List<PatientFamilyRelationship> familyRelationships) { this.familyRelationships = familyRelationships; }
+
+    public Long getHospitalId() { return hospitalId; }
+    public void setHospitalId(Long hospitalId) { this.hospitalId = hospitalId; }
+
+    public Long getAmbulanceId() { return ambulanceId; }
+    public void setAmbulanceId(Long ambulanceId) { this.ambulanceId = ambulanceId; }
 
     // UserDetails implementations
     @Override

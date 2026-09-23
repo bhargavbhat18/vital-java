@@ -129,6 +129,9 @@ def run_tests():
     # Now let's change Apollo's Cardiology department to NOT accepting patients
     # First get Apollo's departments
     r = requests.get(f"{BASE_URL}/api/hospital/departments/Apollo Hospital", headers=headers)
+    if r.status_code != 200:
+        print(f"[-] Failed to fetch Apollo departments. Status: {r.status_code}, Body: {r.text}")
+        sys.exit(1)
     apollo_data = r.json()
     cardiology_dep = next(d for d in apollo_data["departments"] if d["name"] == "Cardiology")
     
@@ -166,6 +169,9 @@ def run_tests():
 
     # Check status of that ambulance is now busy
     r = requests.get(f"{BASE_URL}/api/ambulances", headers=headers)
+    if r.status_code != 200:
+        print(f"[-] Failed to fetch ambulances. Status: {r.status_code}, Body: {r.text}")
+        sys.exit(1)
     ambulances = r.json()
     amb1 = next(a for a in ambulances if a["id"] == amb1_id)
     print(f"    Ambulance {amb1['unitId']} status: {amb1['status']}")
@@ -173,6 +179,9 @@ def run_tests():
 
     # Accept the second SOS request
     r = requests.post(f"{BASE_URL}/api/emergency/{sos_pulmonology['id']}/accept", headers=headers)
+    if r.status_code != 200:
+        print(f"[-] Failed to accept pulmonology emergency. Status: {r.status_code}, Body: {r.text}")
+        sys.exit(1)
     sos_pulmonology_accepted = r.json()
     amb2_id = sos_pulmonology_accepted.get("ambulanceId")
     print(f"[+] SOS Event {sos_pulmonology['id']} accepted. Assigned Ambulance ID: {amb2_id}")

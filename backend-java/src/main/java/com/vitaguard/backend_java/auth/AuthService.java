@@ -30,24 +30,29 @@ public class AuthService {
         this.authenticationManager = authenticationManager;
     }
 
-    public AuthResponse register(RegisterRequest request) {
+public AuthResponse register(RegisterRequest request) {
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new IllegalArgumentException("Email already in use");
         }
 
-        // Generate a clean UID for compatibility (e.g. LKT02, LKT03, etc., or standard format)
+        // Only allow public registration for PATIENT and FAMILY_MEMBER roles
+        String role = request.getRole();
+        if (!"PATIENT".equals(role) && !"FAMILY_MEMBER".equals(role)) {
+            throw new IllegalArgumentException("Invalid role for public registration. Only PATIENT and FAMILY_MEMBER are allowed.");
+        }
+
+        // Generate a clean UID for compatibility
         String prefix = "USR";
-        if ("PATIENT".equals(request.getRole())) prefix = "PAT";
-        else if ("DOCTOR".equals(request.getRole())) prefix = "DOC";
-        else if ("HOSPITAL_ADMIN".equals(request.getRole())) prefix = "HSP";
-        
+        if ("PATIENT".equals(role)) prefix = "PAT";
+        else if ("FAMILY_MEMBER".equals(role)) prefix = "FAM";
+
         String uid = prefix + "_" + UUID.randomUUID().toString().substring(0, 5).toUpperCase();
 
         User user = new User(
                 uid,
                 request.getEmail(),
                 passwordEncoder.encode(request.getPassword()),
-                request.getRole()
+                role
         );
         user.setFullName(request.getFullName());
         user.setAge(request.getAge());

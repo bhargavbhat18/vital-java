@@ -231,6 +231,9 @@ public class EmergencyService {
                         destLat, destLng
                 );
 
+                // Send immediate live tracking update upon dispatch
+                sendLiveTrackingUpdate(request, ambulance.getLatitude(), ambulance.getLongitude(), 0.0, "Dispatched");
+
                 int totalSteps = routePoints.size();
                 for (int step = 0; step < totalSteps; step++) {
                     Thread.sleep(3000); // 3-second simulation step

@@ -22,6 +22,7 @@ public class FamilyNotificationService {
     private final HospitalRepository hospitalRepository;
     private final DoctorRepository doctorRepository;
     private final AmbulanceRepository ambulanceRepository;
+    private final PatientFamilyRelationshipRepository relationshipRepository;
     private final SimpMessagingTemplate messagingTemplate;
 
     public FamilyNotificationService(
@@ -29,12 +30,14 @@ public class FamilyNotificationService {
             HospitalRepository hospitalRepository,
             DoctorRepository doctorRepository,
             AmbulanceRepository ambulanceRepository,
+            PatientFamilyRelationshipRepository relationshipRepository,
             SimpMessagingTemplate messagingTemplate
     ) {
         this.userRepository = userRepository;
         this.hospitalRepository = hospitalRepository;
         this.doctorRepository = doctorRepository;
         this.ambulanceRepository = ambulanceRepository;
+        this.relationshipRepository = relationshipRepository;
         this.messagingTemplate = messagingTemplate;
     }
 
@@ -45,9 +48,9 @@ public class FamilyNotificationService {
         }
 
         User patient = userOpt.get();
-        List<FamilyMember> contacts = patient.getFamilyMembers();
+        List<PatientFamilyRelationship> relationships = relationshipRepository.findByPatientIdAndActiveTrue(patient.getId());
 
-        if (contacts == null || contacts.isEmpty()) {
+        if (relationships == null || relationships.isEmpty()) {
             System.out.println("[FamilyNotify] No registered family contacts found for patient " + patient.getUid());
             return;
         }

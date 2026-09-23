@@ -88,10 +88,30 @@ public class EmergenciesController {
             return ResponseEntity.notFound().build();
         }
 
-        boolean isAuthorized = currentUid.equals(req.getPatientUid())
-                || "DOCTOR".equals(requester.getRole())
-                || "HOSPITAL_ADMIN".equals(requester.getRole())
-                || "ADMIN".equals(requester.getRole());
+        // Authorization:
+        // Patient: own emergency
+        // Doctor: assigned emergencies only
+        // Hospital Admin: emergencies for their hospital
+        // System Admin: all emergencies
+        boolean isAuthorized = false;
+        String role = requester.getRole();
+
+        if (currentUid.equals(req.getPatientUid())) {
+            isAuthorized = true;
+        } else if ("DOCTOR".equals(role) && req.getDoctorId() != null && req.getDoctorId().equals(requester.getId())) {
+            isAuthorized = true;
+        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null 
+                && requester.getHospitalId().equals(req.getHospitalId())) {
+            isAuthorized = true;
+        } else if ("SYSTEM_ADMIN".equals(role) || "ADMIN".equals(role)) {
+            isAuthorized = true;
+        } else if ("AMBULANCE_DRIVER".equals(role) && req.getAmbulanceId() != null) {
+            Optional<Ambulance> ambOpt = ambulanceRepository.findById(req.getAmbulanceId());
+            if (ambOpt.isPresent() && ambOpt.get().getDriver() != null 
+                    && ambOpt.get().getDriver().getId().equals(requester.getId())) {
+                isAuthorized = true;
+            }
+        }
 
         if (!isAuthorized) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied to emergency event"));
@@ -109,10 +129,27 @@ public class EmergenciesController {
         EmergencyRequest req = emergencyRepository.findById(id).orElse(null);
         if (req == null) return ResponseEntity.notFound().build();
 
-        boolean isAuthorized = currentUid.equals(req.getPatientUid())
-                || "DOCTOR".equals(requester.getRole())
-                || "HOSPITAL_ADMIN".equals(requester.getRole())
-                || "ADMIN".equals(requester.getRole());
+        // Authorization: same as getEmergency
+        boolean isAuthorized = false;
+        String role = requester.getRole();
+
+        if (currentUid.equals(req.getPatientUid())) {
+            isAuthorized = true;
+        } else if ("DOCTOR".equals(role) && req.getDoctorId() != null && req.getDoctorId().equals(requester.getId())) {
+            isAuthorized = true;
+        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null 
+                && requester.getHospitalId().equals(req.getHospitalId())) {
+            isAuthorized = true;
+        } else if ("SYSTEM_ADMIN".equals(role) || "ADMIN".equals(role)) {
+            isAuthorized = true;
+        } else if ("AMBULANCE_DRIVER".equals(role) && req.getAmbulanceId() != null) {
+            Optional<Ambulance> ambOpt = ambulanceRepository.findById(req.getAmbulanceId());
+            if (ambOpt.isPresent() && ambOpt.get().getDriver() != null 
+                    && ambOpt.get().getDriver().getId().equals(requester.getId())) {
+                isAuthorized = true;
+            }
+        }
+
         if (!isAuthorized) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
         return ResponseEntity.ok(eventRepository.findByEmergencyIdOrderByTimestampAsc(id));
@@ -145,10 +182,27 @@ public class EmergenciesController {
         EmergencyRequest req = emergencyRepository.findById(id).orElse(null);
         if (req == null) return ResponseEntity.notFound().build();
 
-        boolean isAuthorized = currentUid.equals(req.getPatientUid())
-                || "DOCTOR".equals(requester.getRole())
-                || "HOSPITAL_ADMIN".equals(requester.getRole())
-                || "ADMIN".equals(requester.getRole());
+        // Authorization: same as getEmergency
+        boolean isAuthorized = false;
+        String role = requester.getRole();
+
+        if (currentUid.equals(req.getPatientUid())) {
+            isAuthorized = true;
+        } else if ("DOCTOR".equals(role) && req.getDoctorId() != null && req.getDoctorId().equals(requester.getId())) {
+            isAuthorized = true;
+        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null 
+                && requester.getHospitalId().equals(req.getHospitalId())) {
+            isAuthorized = true;
+        } else if ("SYSTEM_ADMIN".equals(role) || "ADMIN".equals(role)) {
+            isAuthorized = true;
+        } else if ("AMBULANCE_DRIVER".equals(role) && req.getAmbulanceId() != null) {
+            Optional<Ambulance> ambOpt = ambulanceRepository.findById(req.getAmbulanceId());
+            if (ambOpt.isPresent() && ambOpt.get().getDriver() != null 
+                    && ambOpt.get().getDriver().getId().equals(requester.getId())) {
+                isAuthorized = true;
+            }
+        }
+
         if (!isAuthorized) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
         if (req.getHospitalId() == null) {
@@ -193,10 +247,27 @@ public class EmergenciesController {
         EmergencyRequest req = emergencyRepository.findById(id).orElse(null);
         if (req == null) return ResponseEntity.notFound().build();
 
-        boolean isAuthorized = currentUid.equals(req.getPatientUid())
-                || "DOCTOR".equals(requester.getRole())
-                || "HOSPITAL_ADMIN".equals(requester.getRole())
-                || "ADMIN".equals(requester.getRole());
+        // Authorization: same as getEmergency
+        boolean isAuthorized = false;
+        String role = requester.getRole();
+
+        if (currentUid.equals(req.getPatientUid())) {
+            isAuthorized = true;
+        } else if ("DOCTOR".equals(role) && req.getDoctorId() != null && req.getDoctorId().equals(requester.getId())) {
+            isAuthorized = true;
+        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null 
+                && requester.getHospitalId().equals(req.getHospitalId())) {
+            isAuthorized = true;
+        } else if ("SYSTEM_ADMIN".equals(role) || "ADMIN".equals(role)) {
+            isAuthorized = true;
+        } else if ("AMBULANCE_DRIVER".equals(role) && req.getAmbulanceId() != null) {
+            Optional<Ambulance> ambOpt = ambulanceRepository.findById(req.getAmbulanceId());
+            if (ambOpt.isPresent() && ambOpt.get().getDriver() != null 
+                    && ambOpt.get().getDriver().getId().equals(requester.getId())) {
+                isAuthorized = true;
+            }
+        }
+
         if (!isAuthorized) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
         if (req.getDoctorId() == null) {
@@ -235,16 +306,25 @@ public class EmergenciesController {
         User requester = userRepository.findByUid(currentUid).orElse(null);
         if (requester == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
 
-        boolean isStaff = "DOCTOR".equals(requester.getRole())
-                || "HOSPITAL_ADMIN".equals(requester.getRole())
-                || "ADMIN".equals(requester.getRole());
-        if (!isStaff) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-
         Optional<EmergencyRequest> reqOpt = emergencyRepository.findById(id);
         if (!reqOpt.isPresent()) {
             return ResponseEntity.notFound().build();
         }
         EmergencyRequest req = reqOpt.get();
+
+        // Authorization: Hospital admin for their hospital, or system admin
+        boolean isAuthorized = false;
+        String role = requester.getRole();
+
+        if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null 
+                && requester.getHospitalId().equals(req.getHospitalId())) {
+            isAuthorized = true;
+        } else if ("SYSTEM_ADMIN".equals(role) || "ADMIN".equals(role)) {
+            isAuthorized = true;
+        }
+
+        if (!isAuthorized) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+
         workflowService.dispatchAmbulance(req);
         return ResponseEntity.ok(req);
     }
@@ -255,10 +335,26 @@ public class EmergenciesController {
         User requester = userRepository.findByUid(currentUid).orElse(null);
         if (requester == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
 
-        boolean isStaff = "DOCTOR".equals(requester.getRole())
-                || "HOSPITAL_ADMIN".equals(requester.getRole())
-                || "ADMIN".equals(requester.getRole());
-        if (!isStaff) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        Optional<EmergencyRequest> reqOpt = emergencyRepository.findById(id);
+        if (reqOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        EmergencyRequest req = reqOpt.get();
+
+        // Authorization: Assigned doctor, hospital admin for their hospital, or system admin
+        boolean isAuthorized = false;
+        String role = requester.getRole();
+
+        if ("DOCTOR".equals(role) && req.getDoctorId() != null && req.getDoctorId().equals(requester.getId())) {
+            isAuthorized = true;
+        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null 
+                && requester.getHospitalId().equals(req.getHospitalId())) {
+            isAuthorized = true;
+        } else if ("SYSTEM_ADMIN".equals(role) || "ADMIN".equals(role)) {
+            isAuthorized = true;
+        }
+
+        if (!isAuthorized) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
         workflowService.resolveEmergency(id);
         return ResponseEntity.ok(Map.of("success", true, "sos_id", id, "status", "resolved"));

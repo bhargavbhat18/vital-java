@@ -4,8 +4,11 @@ import com.vitaguard.backend_java.doctor.Doctor;
 import com.vitaguard.backend_java.doctor.DoctorRepository;
 import com.vitaguard.backend_java.emergency.EmergencyRequest;
 import com.vitaguard.backend_java.emergency.EmergencyRequestRepository;
+import com.vitaguard.backend_java.user.User;
 import com.vitaguard.backend_java.user.UserRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -43,31 +46,98 @@ public class HospitalController {
     }
 
     @GetMapping("/emergencies")
-    public ResponseEntity<List<EmergencyRequest>> getEmergencies() {
-        // Return active emergencies for hospital portals
-        return ResponseEntity.ok(emergencyRepository.findByStatusIn(List.of(
-                "CREATED", "SEARCHING_HOSPITAL", "HOSPITAL_ASSIGNED", "ACCEPTED",
-                "DOCTOR_ASSIGNED", "AMBULANCE_ASSIGNED", "AMBULANCE_EN_ROUTE", "PATIENT_PICKED_UP"
-        )));
+    public ResponseEntity<?> getEmergencies() {
+        String adminUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User admin = userRepository.findByUid(adminUid).orElse(null);
+
+        if (admin == null || !"HOSPITAL_ADMIN".equals(admin.getRole())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only hospital admins can access this endpoint"));
+        }
+
+        if (admin.getHospitalId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Hospital admin not linked to a hospital"));
+        }
+
+        // Return only emergencies assigned to THIS hospital
+        List<EmergencyRequest> emergencies = emergencyRepository.findByHospitalId(admin.getHospitalId());
+        return ResponseEntity.ok(emergencies);
+    }
+
+    @GetMapping("/incoming")
+    public ResponseEntity<?> getIncomingEmergencies() {
+        String adminUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User admin = userRepository.findByUid(adminUid).orElse(null);
+
+        if (admin == null || !"HOSPITAL_ADMIN".equals(admin.getRole())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only hospital admins can access this endpoint"));
+        }
+
+        if (admin.getHospitalId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Hospital admin not linked to a hospital"));
+        }
+
+        // Return emergencies that are incoming (not yet resolved) for THIS hospital
+        List<EmergencyRequest> emergencies = emergencyRepository.findByHospitalIdAndStatusIn(admin.getHospitalId(), List.of(
+                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
+                "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
+                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL"
+        ));
+        return ResponseEntity.ok(emergencies);
     }
 
     @GetMapping("/stats")
     public ResponseEntity<?> getStats() {
+        String adminUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User admin = userRepository.findByUid(adminUid).orElse(null);
+
+        if (admin == null || !"HOSPITAL_ADMIN".equals(admin.getRole())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only hospital admins can access this endpoint"));
+        }
+
+        if (admin.getHospitalId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Hospital admin not linked to a hospital"));
+        }
+
+        Hospital hospital = hospitalRepository.findById(admin.getHospitalId()).orElse(null);
+        if (hospital == null) {
+            return ResponseEntity.notFound().build();
+        }
+
         Map<String, Object> stats = new HashMap<>();
-        stats.put("total_sos", emergencyRepository.count());
-        stats.put("active", emergencyRepository.findByStatusIn(List.of("AMBULANCE_EN_ROUTE", "PATIENT_PICKED_UP")).size());
-        stats.put("resolved", emergencyRepository.findByStatusIn(List.of("COMPLETED", "resolved")).size());
-        stats.put("total_patients", userRepository.count());
-        stats.put("hospitals", hospitalRepository.findAll());
+        stats.put("hospital", hospital);
+        stats.put("total_emergencies", emergencyRepository.countByHospitalId(admin.getHospitalId()));
+        stats.put("active_emergencies", emergencyRepository.findByHospitalIdAndStatusIn(admin.getHospitalId(), List.of(
+                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
+                "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
+                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL"
+        )).size());
+        stats.put("available_beds", hospital.getAvailableBeds());
+        stats.put("total_beds", hospital.getTotalBeds());
+        stats.put("available_doctors", hospital.getAvailableDoctors());
+        stats.put("total_doctors", hospital.getTotalDoctors());
+        stats.put("doctors_on_duty", doctorRepository.findByHospitalIdAndOnDuty(admin.getHospitalId(), true).size());
         return ResponseEntity.ok(stats);
     }
 
     @PostMapping("/resolve/{id}")
     public ResponseEntity<?> resolveCase(@PathVariable Long id) {
+        String adminUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User admin = userRepository.findByUid(adminUid).orElse(null);
+
+        if (admin == null || !"HOSPITAL_ADMIN".equals(admin.getRole())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only hospital admins can resolve cases"));
+        }
+
         Optional<EmergencyRequest> reqOpt = emergencyRepository.findById(id);
         if (reqOpt.isPresent()) {
             EmergencyRequest req = reqOpt.get();
-            req.setStatus("COMPLETED");
+
+            // Verify this emergency belongs to this hospital
+            if (!admin.getHospitalId().equals(req.getHospitalId())) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Cannot resolve emergency from another hospital"));
+            }
+
+            req.setStatus("RESOLVED");
             req.setCompletedAt(java.time.LocalDateTime.now());
             emergencyRepository.save(req);
 
@@ -89,6 +159,13 @@ public class HospitalController {
 
     @GetMapping("/departments/{name}")
     public ResponseEntity<?> getHospitalDepartments(@PathVariable String name) {
+        String currentUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User requester = userRepository.findByUid(currentUid).orElse(null);
+
+        if (requester == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
         return hospitalRepository.findByName(name)
                 .map(hospital -> {
                     Map<String, Object> data = new HashMap<>();
@@ -101,24 +178,43 @@ public class HospitalController {
 
     @PostMapping("/departments")
     public ResponseEntity<?> configureDepartment(@RequestBody Map<String, Object> payload) {
-        Long depId = ((Number) payload.get("id")).longValue();
-        Boolean available = (Boolean) payload.get("available");
-        Boolean emergencyService = (Boolean) payload.get("emergencyService");
-        Boolean acceptingPatients = (Boolean) payload.get("acceptingPatients");
-        Integer availableBeds = ((Number) payload.get("availableBeds")).intValue();
-        Integer availableDoctors = ((Number) payload.get("availableDoctors")).intValue();
+        String currentUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User requester = userRepository.findByUid(currentUid).orElse(null);
 
-        return departmentRepository.findById(depId)
-                .map(dep -> {
-                    dep.setAvailable(available);
-                    dep.setEmergencyService(emergencyService);
-                    dep.setAcceptingPatients(acceptingPatients);
-                    dep.setAvailableBeds(availableBeds);
-                    dep.setAvailableDoctors(availableDoctors);
-                    departmentRepository.save(dep);
-                    return ResponseEntity.ok(dep);
-                })
-                .orElse(ResponseEntity.notFound().build());
+        if (requester == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        Long depId = ((Number) payload.get("id")).longValue();
+
+        // Verify department exists
+        Optional<HospitalDepartment> depOpt = departmentRepository.findById(depId);
+        if (depOpt.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // If requester is a HOSPITAL_ADMIN, verify department belongs to their hospital
+        if ("HOSPITAL_ADMIN".equals(requester.getRole()) && requester.getHospitalId() != null) {
+            if (!depOpt.get().getHospital().getId().equals(requester.getHospitalId())) {
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Department not found or not in your hospital"));
+            }
+        }
+
+        Boolean available = payload.containsKey("available") ? (Boolean) payload.get("available") : null;
+        Boolean emergencyService = payload.containsKey("emergencyService") ? (Boolean) payload.get("emergencyService") : null;
+        Boolean acceptingPatients = payload.containsKey("acceptingPatients") ? (Boolean) payload.get("acceptingPatients") : null;
+        Integer availableBeds = payload.containsKey("availableBeds") && payload.get("availableBeds") != null ? ((Number) payload.get("availableBeds")).intValue() : null;
+        Integer availableDoctors = payload.containsKey("availableDoctors") && payload.get("availableDoctors") != null ? ((Number) payload.get("availableDoctors")).intValue() : null;
+
+        return depOpt.map(dep -> {
+            if (available != null) dep.setAvailable(available);
+            if (emergencyService != null) dep.setEmergencyService(emergencyService);
+            if (acceptingPatients != null) dep.setAcceptingPatients(acceptingPatients);
+            if (availableBeds != null) dep.setAvailableBeds(availableBeds);
+            if (availableDoctors != null) dep.setAvailableDoctors(availableDoctors);
+            departmentRepository.save(dep);
+            return ResponseEntity.ok(dep);
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping("/doctors/status")
