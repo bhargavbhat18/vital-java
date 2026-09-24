@@ -51,7 +51,7 @@ public class DatabaseSeeder implements CommandLineRunner {
     public void run(String... args) throws Exception {
         // Seed default patient user for testing
         User patient = null;
-        if (!userRepository.existsByUid("LKT01")) {
+        if (!userRepository.existsByEmail("patient@vitaguard.com")) {
             patient = new User("LKT01", "patient@vitaguard.com", passwordEncoder.encode("password"), "PATIENT");
             patient.setFullName("Rahul Sharma");
             patient.setAge(45);
@@ -62,7 +62,7 @@ public class DatabaseSeeder implements CommandLineRunner {
             userRepository.save(patient);
             System.out.println("[SEED] Test patient LKT01 seeded successfully.");
         } else {
-            patient = userRepository.findByUid("LKT01").orElse(null);
+            patient = userRepository.findByEmail("patient@vitaguard.com").orElse(null);
         }
 
         // Seed family member
@@ -90,26 +90,26 @@ public class DatabaseSeeder implements CommandLineRunner {
             doctorUser = userRepository.findByEmail("doctor@vitaguard.com").orElse(null);
         }
 
-        // Seed hospital admin user
+        // Seed hospital admin user - DEMO ACCOUNT
         User hospitalAdmin = null;
-        if (!userRepository.existsByEmail("admin@apollo.com")) {
-            hospitalAdmin = new User("HSP_01", "admin@apollo.com", passwordEncoder.encode("password"), "HOSPITAL_ADMIN");
-            hospitalAdmin.setFullName("Apollo Admin");
+        if (!userRepository.existsByEmail("hospital-admin@vitalguard.com")) {
+            hospitalAdmin = new User("HSP_01", "hospital-admin@vitalguard.com", passwordEncoder.encode("password"), "HOSPITAL_ADMIN");
+            hospitalAdmin.setFullName("Hospital Admin (Apollo)");
             userRepository.save(hospitalAdmin);
-            System.out.println("[SEED] Test hospital admin seeded successfully.");
+            System.out.println("[SEED] Demo hospital admin seeded successfully.");
         } else {
-            hospitalAdmin = userRepository.findByEmail("admin@apollo.com").orElse(null);
+            hospitalAdmin = userRepository.findByEmail("hospital-admin@vitalguard.com").orElse(null);
         }
 
-        // Seed ambulance driver user
+        // Seed ambulance driver user - DEMO ACCOUNT
         User driverUser = null;
-        if (!userRepository.existsByEmail("driver@vitaguard.com")) {
-            driverUser = new User("AMB_01", "driver@vitaguard.com", passwordEncoder.encode("password"), "AMBULANCE_DRIVER");
-            driverUser.setFullName("Rajesh Kumar");
+        if (!userRepository.existsByEmail("ambulance-driver@vitalguard.com")) {
+            driverUser = new User("AMB_01", "ambulance-driver@vitalguard.com", passwordEncoder.encode("password"), "AMBULANCE_DRIVER");
+            driverUser.setFullName("Ambulance Driver (AMB-01)");
             userRepository.save(driverUser);
-            System.out.println("[SEED] Test ambulance driver seeded successfully.");
+            System.out.println("[SEED] Demo ambulance driver seeded successfully.");
         } else {
-            driverUser = userRepository.findByEmail("driver@vitaguard.com").orElse(null);
+            driverUser = userRepository.findByEmail("ambulance-driver@vitalguard.com").orElse(null);
         }
 
         // Seed system admin user
@@ -123,6 +123,7 @@ public class DatabaseSeeder implements CommandLineRunner {
             sysAdmin = userRepository.findByEmail("sysadmin@vitaguard.com").orElse(null);
         }
 
+        // Seed hospitals if empty
         if (hospitalRepository.count() == 0) {
             // Seed Apollo Hospital
             Hospital apollo = new Hospital("Apollo Hospital", 12.9252, 77.6011, 100, 85, 30, 12, 4.8);
@@ -139,7 +140,7 @@ public class DatabaseSeeder implements CommandLineRunner {
                 userRepository.save(doctorUser);
             }
 
-            // Link hospital admin to hospital
+            // Link hospital admin to Apollo Hospital
             if (hospitalAdmin != null) {
                 hospitalAdmin.setHospitalId(apollo.getId());
                 userRepository.save(hospitalAdmin);
@@ -180,13 +181,15 @@ public class DatabaseSeeder implements CommandLineRunner {
             System.out.println("[SEED] Seeded 5 hospitals, departments, and doctors successfully.");
         }
 
-        // Link hospital admin to Apollo Hospital
+        // Ensure hospital admin is linked to Apollo Hospital (idempotent)
         Hospital apollo = hospitalRepository.findByName("Apollo Hospital").orElse(null);
-        if (apollo != null && hospitalAdmin != null) {
+        if (apollo != null && hospitalAdmin != null && !apollo.getId().equals(hospitalAdmin.getHospitalId())) {
             hospitalAdmin.setHospitalId(apollo.getId());
             userRepository.save(hospitalAdmin);
+            System.out.println("[SEED] Linked hospital admin to Apollo Hospital.");
         }
 
+        // Seed ambulances if empty
         if (ambulanceRepository.count() == 0) {
             // Seed ambulances located initially at respective hospitals
             Ambulance amb1 = new Ambulance("AMB-01", "Apollo Hospital", 12.9252, 77.6011);
@@ -201,15 +204,26 @@ public class DatabaseSeeder implements CommandLineRunner {
             ambulanceRepository.save(amb4);
             ambulanceRepository.save(amb5);
 
-            // Link driver to ambulance
+            // Link driver to ambulance AMB-01 (Apollo Hospital)
             if (driverUser != null && amb1 != null) {
                 amb1.setDriver(driverUser);
                 driverUser.setAmbulanceId(amb1.getId());
                 ambulanceRepository.save(amb1);
                 userRepository.save(driverUser);
+                System.out.println("[SEED] Linked ambulance driver to AMB-01 (Apollo Hospital).");
             }
 
             System.out.println("[SEED] Seeded 5 ambulances successfully.");
+        }
+
+        // Ensure ambulance driver is linked to AMB-01 (idempotent)
+        Ambulance amb1 = ambulanceRepository.findByUnitId("AMB-01").orElse(null);
+        if (amb1 != null && driverUser != null && !amb1.getId().equals(driverUser.getAmbulanceId())) {
+            amb1.setDriver(driverUser);
+            driverUser.setAmbulanceId(amb1.getId());
+            ambulanceRepository.save(amb1);
+            userRepository.save(driverUser);
+            System.out.println("[SEED] Linked ambulance driver to AMB-01 (Apollo Hospital).");
         }
 
         // Create family-patient relationship

@@ -10,6 +10,16 @@ const Login = () => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // Demo accounts (development only)
+  const demoAccounts = [
+    { email: 'patient@vitaguard.com', role: 'PATIENT', password: 'password', desc: 'Patient Dashboard' },
+    { email: 'family@vitaguard.com', role: 'FAMILY_MEMBER', password: 'password', desc: 'Family Dashboard' },
+    { email: 'doctor@vitaguard.com', role: 'DOCTOR', password: 'password', desc: 'Doctor Dashboard' },
+    { email: 'hospital-admin@vitalguard.com', role: 'HOSPITAL_ADMIN', password: 'password', desc: 'Hospital Admin Dashboard (Apollo Hospital)' },
+    { email: 'ambulance-driver@vitalguard.com', role: 'AMBULANCE_DRIVER', password: 'password', desc: 'Ambulance Driver Dashboard (AMB-01)' },
+    { email: 'sysadmin@vitaguard.com', role: 'SYSTEM_ADMIN', password: 'password', desc: 'System Admin Dashboard' }
+  ];
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -17,10 +27,21 @@ const Login = () => {
 
     try {
       const userData = await login(email, password);
-      if (userData.role === 'PATIENT' || userData.role === 'FAMILY_MEMBER') {
-        navigate('/user-dashboard');
-      } else {
-        navigate('/healthcare-dashboard');
+      // Backend-driven role redirect
+      switch (userData.role) {
+        case 'PATIENT':
+        case 'FAMILY_MEMBER':
+          navigate('/user-dashboard');
+          break;
+        case 'DOCTOR':
+        case 'HOSPITAL_ADMIN':
+        case 'AMBULANCE_DRIVER':
+        case 'ADMIN':
+        case 'SYSTEM_ADMIN':
+          navigate('/healthcare-dashboard');
+          break;
+        default:
+          navigate('/healthcare-dashboard');
       }
     } catch (err) {
       console.error(err);
@@ -28,6 +49,11 @@ const Login = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const fillDemoAccount = (account) => {
+    setEmail(account.email);
+    setPassword(account.password);
   };
 
   return (
@@ -76,6 +102,43 @@ const Login = () => {
             {loading ? 'Signing in...' : 'Sign In'}
           </button>
         </form>
+
+        {/* Demo Accounts Section (Development Only) */}
+        <div style={{ marginTop: '28px', paddingTop: '20px', borderTop: '1px solid var(--border-color)' }}>
+          <h4 style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px' }}>
+            Demo Accounts (Development)
+          </h4>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', fontSize: '11px' }}>
+            {demoAccounts.map((account, idx) => (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => fillDemoAccount(account)}
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '10px 12px',
+                  background: '#f8fafc',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontSize: '11px',
+                  transition: 'all 0.15s ease'
+                }}
+                onMouseOver={(e) => e.target.style.background = '#eef2ff'}
+                onMouseOut={(e) => e.target.style.background = '#f8fafc'}
+              >
+                <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{account.email}</span>
+                <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '10px' }}>{account.role}</span>
+              </button>
+            ))}
+          </div>
+          <p style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '8px', fontStyle: 'italic' }}>
+            Password for all demo accounts: <code style={{ background: '#f1f5f9', padding: '2px 6px', borderRadius: '4px' }}>password</code>
+          </p>
+        </div>
 
         <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '13px', color: 'var(--text-secondary)' }}>
           Don't have an account? <Link to="/signup" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Sign up</Link>

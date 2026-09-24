@@ -6,6 +6,8 @@ public class AuthResponse {
     private String email;
     private String role;
     private String fullName;
+    private Long hospitalId;
+    private Long ambulanceId;
 
     public AuthResponse(String token, String uid, String email, String role, String fullName) {
         this.token = token;
@@ -13,6 +15,16 @@ public class AuthResponse {
         this.email = email;
         this.role = role;
         this.fullName = fullName;
+    }
+
+    public AuthResponse(String token, String uid, String email, String role, String fullName, Long hospitalId, Long ambulanceId) {
+        this.token = token;
+        this.uid = uid;
+        this.email = email;
+        this.role = role;
+        this.fullName = fullName;
+        this.hospitalId = hospitalId;
+        this.ambulanceId = ambulanceId;
     }
 
     public String getToken() { return token; }
@@ -29,4 +41,10 @@ public class AuthResponse {
 
     public String getFullName() { return fullName; }
     public void setFullName(String fullName) { this.fullName = fullName; }
+
+    public Long getHospitalId() { return hospitalId; }
+    public void setHospitalId(Long hospitalId) { this.hospitalId = hospitalId; }
+
+    public Long getAmbulanceId() { return ambulanceId; }
+    public void setAmbulanceId(Long ambulanceId) { this.ambulanceId = ambulanceId; }
 }

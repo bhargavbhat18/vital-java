@@ -57,9 +57,13 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can access this endpoint"));
         }
 
+        if (driver.getAmbulanceId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
+        }
+
         Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
         if (ambulanceOpt.isEmpty()) {
-            return ResponseEntity.ok(Map.of("message", "No ambulance assigned to this driver"));
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "No ambulance assigned to this driver"));
         }
 
         Ambulance ambulance = ambulanceOpt.get();
@@ -83,6 +87,10 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can access this endpoint"));
         }
 
+        if (driver.getAmbulanceId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
+        }
+
         List<AmbulanceRequest> requests = ambulanceService.getPendingRequests(driver.getId());
         return ResponseEntity.ok(requests);
     }
@@ -94,6 +102,10 @@ public class AmbulanceController {
 
         if (driver == null || !"AMBULANCE_DRIVER".equals(driver.getRole())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can accept requests"));
+        }
+
+        if (driver.getAmbulanceId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
         }
 
         boolean accepted = ambulanceService.acceptRequest(requestId, driver.getId());
@@ -113,6 +125,10 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can decline requests"));
         }
 
+        if (driver.getAmbulanceId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
+        }
+
         boolean declined = ambulanceService.declineRequest(requestId, driver.getId());
         if (declined) {
             return ResponseEntity.ok(Map.of("success", true, "message", "Request declined"));
@@ -128,6 +144,10 @@ public class AmbulanceController {
 
         if (driver == null || !"AMBULANCE_DRIVER".equals(driver.getRole())) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can update status"));
+        }
+
+        if (driver.getAmbulanceId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
         }
 
         Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());

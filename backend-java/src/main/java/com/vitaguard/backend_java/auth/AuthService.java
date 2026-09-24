@@ -87,6 +87,6 @@ public AuthResponse register(RegisterRequest request) {
         );
 
         String jwtToken = jwtService.generateToken(user);
-        return new AuthResponse(jwtToken, user.getUid(), user.getEmail(), user.getRole(), user.getFullName());
+        return new AuthResponse(jwtToken, user.getUid(), user.getEmail(), user.getRole(), user.getFullName(), user.getHospitalId(), user.getAmbulanceId());
     }
 }

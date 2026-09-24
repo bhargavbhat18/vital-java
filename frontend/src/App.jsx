@@ -31,6 +31,37 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
     return <Navigate to="/healthcare-dashboard" replace />;
   }
 
+  // Validate required resource relationships
+  if (user?.role === 'HOSPITAL_ADMIN' && !user.hospitalId) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', background: '#f8f9fb', fontFamily: 'sans-serif', padding: '20px' }}>
+        <div className="saas-card" style={{ maxWidth: '480px', padding: '40px', textAlign: 'center' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
+          <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Missing Hospital Association</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: 1.6, marginBottom: '24px' }}>
+            Your Hospital Admin account is not linked to a hospital. Please contact the system administrator to assign you to a hospital.
+          </p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '12px' }}>User: {user.fullName} ({user.email})</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (user?.role === 'AMBULANCE_DRIVER' && !user.ambulanceId) {
+    return (
+      <div style={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', background: '#f8f9fb', fontFamily: 'sans-serif', padding: '20px' }}>
+        <div className="saas-card" style={{ maxWidth: '480px', padding: '40px', textAlign: 'center' }}>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>⚠️</div>
+          <h2 style={{ fontSize: '22px', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '12px' }}>Missing Ambulance Association</h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: 1.6, marginBottom: '24px' }}>
+            Your Ambulance Driver account is not linked to an ambulance. Please contact the system administrator to assign you to an ambulance.
+          </p>
+          <p style={{ color: 'var(--text-muted)', fontSize: '12px' }}>User: {user.fullName} ({user.email})</p>
+        </div>
+      </div>
+    );
+  }
+
   return children;
 };
 
@@ -55,7 +86,7 @@ function App() {
         <Route 
           path="/healthcare-dashboard" 
           element={
-            <ProtectedRoute allowedRoles={['DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'ADMIN']}>
+            <ProtectedRoute allowedRoles={['DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'ADMIN', 'SYSTEM_ADMIN']}>
               <HealthcareDashboard />
             </ProtectedRoute>
           } 
