@@ -595,12 +595,19 @@ body::after {
   background: var(--accent-red);
   box-shadow: 0 0 0 2px rgba(244, 63, 94, 0.3);
 }
+.t-dot.completed {
+  background: var(--accent-green);
+  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.3);
+}
 .t-connector {
   width: 2px;
   flex: 1;
   background: var(--border-color);
   margin-top: 4px;
   margin-bottom: -14px;
+}
+.t-connector.completed {
+  background: var(--accent-green);
 }
 .timeline-info {
   display: flex;
@@ -611,6 +618,12 @@ body::after {
   font-size: 13px;
   font-weight: 700;
   color: var(--text-primary);
+}
+.timeline-status.active {
+  color: var(--accent-red);
+}
+.timeline-status.completed {
+  color: var(--accent-green);
 }
 .timeline-time {
   font-size: 10px;

@@ -3,6 +3,24 @@ import { useAuth } from '../context/AuthContext';
 import API, { isActiveEmergency, useApiResource } from '../services/api';
 import { useRealtimeRefresh } from '../services/websocket';
 import MapComponent from '../components/MapComponent';
+import GoogleMapTracking from '../components/GoogleMapTracking';
+import { displayDate, displayValue } from '../services/api';
+
+// Timeline Events
+const timelineEvents = [
+  { status: 'DETECTED', description: 'Abnormal vitals detected by AI monitoring system', timestamp: null },
+  { status: 'HOSPITAL_ASSIGNED', description: 'Nearest suitable hospital assigned based on capability and distance', timestamp: null },
+  { status: 'DOCTOR_ASSIGNED', description: 'Specialist doctor assigned based on required department', timestamp: null },
+  { status: 'FAMILY_NOTIFIED', description: 'Emergency notification sent to registered family members', timestamp: null },
+  { status: 'AMBULANCE_REQUESTED', description: 'Nearest available ambulance requested for patient pickup', timestamp: null },
+  { status: 'AMBULANCE_ACCEPTED', description: 'Ambulance driver accepted the emergency request', timestamp: null },
+  { status: 'AMBULANCE_DISPATCHED', description: 'Ambulance en route to patient location', timestamp: null },
+  { status: 'ARRIVED_AT_PATIENT', description: 'Ambulance arrived at patient location', timestamp: null },
+  { status: 'PATIENT_PICKED_UP', description: 'Patient loaded into ambulance', timestamp: null },
+  { status: 'EN_ROUTE_TO_HOSPITAL', description: 'Ambulance en route to hospital with patient', timestamp: null },
+  { status: 'ARRIVED_AT_HOSPITAL', description: 'Ambulance arrived at hospital', timestamp: null },
+  { status: 'RESOLVED', description: 'Emergency resolved - patient under medical care', timestamp: null },
+];
 
 // Custom SVG Line Chart Component for React
 const SVGLineChart = ({ data, color, minValDefault, maxValDefault }) => {
@@ -327,6 +345,11 @@ const UserDashboard = () => {
             <button className={`nav-link-btn ${activeTab === 'chat' ? 'active' : ''}`} onClick={() => setActiveTab('chat')}>
               Med-AI Chat
             </button>
+            <a href="/profile" style={{ textDecoration: 'none' }}>
+              <button className="nav-link-btn">
+                Profile
+              </button>
+            </a>
           </div>
 
           <div className="nav-right">
@@ -716,33 +739,44 @@ const UserDashboard = () => {
           <div style={{ display: 'grid', gridTemplateColumns: activeSos ? '1.2fr 0.8fr' : '1fr', gap: '20px' }} className="saas-grid-layout">
             {activeSos ? (
               <>
-                {/* Left pane: Simulator map & timeline */}
+                {/* Left pane: Live Google Map & timeline */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                   <div className="saas-card map-card-wrapper">
-                    <MapComponent
-                      patientLoc={[activeSos.latitude, activeSos.longitude]}
-                      ambulanceLoc={trackingData?.ambulanceLatitude ? [trackingData.ambulanceLatitude, trackingData.ambulanceLongitude] : null}
-                      hospitalLoc={assignedHospital ? [assignedHospital.lat, assignedHospital.lng] : [12.9252, 77.6011]}
+                    <GoogleMapTracking
+                      patientLocation={[activeSos.latitude, activeSos.longitude]}
+                      hospitalLocation={assignedHospital ? [assignedHospital.lat, assignedHospital.lng] : null}
+                      ambulanceLocation={trackingData?.ambulanceLatitude ? [trackingData.ambulanceLatitude, trackingData.ambulanceLongitude] : null}
+                      ambulanceStatus={trackingData?.status}
+                      ambulanceUnitId={trackingData?.ambulanceUnitId}
+                      driverName={trackingData?.driverName}
+                      emergencyId={activeSos.id}
+                      followAmbulance={false}
+                      showRoute={true}
+                      height="380px"
                     />
-                    <div className="map-disclaimer">Prototype GPS simulation — not real-world tracking</div>
+                    <div className="map-disclaimer">Live Google Maps tracking — real-time ambulance location</div>
                   </div>
 
                   <div className="saas-card">
                     <h3 className="card-title" style={{ marginBottom: '20px' }}>📋 Emergency Response Timeline</h3>
                     <div className="saas-timeline">
-                      {timelineEvents.map((t, idx) => (
-                        <div key={idx} className="timeline-item">
-                          <div className="timeline-dot-wrapper">
-                            <div className={`t-dot ${idx === 0 ? 'active' : ''}`} />
-                            {idx < timelineEvents.length - 1 && <div className="t-connector" />}
+                      {timelineEvents.map((t, idx) => {
+                        const isActive = trackingData && t.status === trackingData.status;
+                        const isCompleted = trackingData && timelineEvents.findIndex(e => e.status === trackingData.status) > idx;
+                        return (
+                          <div key={idx} className="timeline-item">
+                            <div className="timeline-dot-wrapper">
+                              <div className={`t-dot ${isActive ? 'active' : isCompleted ? 'completed' : ''}`} />
+                              {idx < timelineEvents.length - 1 && <div className={`t-connector ${isCompleted ? 'completed' : ''}`} />}
+                            </div>
+                            <div className="timeline-info">
+                              <span className={`timeline-status ${isActive ? 'active' : isCompleted ? 'completed' : ''}`}>{t.status}</span>
+                              <span className="timeline-time">{isActive || isCompleted ? (trackingData?.timestamp ? new Date(trackingData.timestamp).toLocaleTimeString() : 'Live') : 'Pending'}</span>
+                              <p className="timeline-desc">{t.description}</p>
+                            </div>
                           </div>
-                          <div className="timeline-info">
-                            <span className="timeline-status">{t.status}</span>
-                            <span className="timeline-time">{new Date(t.timestamp).toLocaleTimeString()}</span>
-                            <p className="timeline-desc">{t.description}</p>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
                 </div>
@@ -776,7 +810,49 @@ const UserDashboard = () => {
                           <strong>Hospital:</strong> {assignedHospital?.name}
                         </p>
                       </div>
-                    ) : <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Awaiting specialist specialist assignment...</p>}
+                    ) : <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>Awaiting specialist assignment...</p>}
+                  </div>
+
+                  <div className="saas-card">
+                    <h3 className="card-title" style={{ marginBottom: '14px' }}>🚑 Ambulance Status</h3>
+                    <div style={{ background: '#f8fafc', padding: '14px', borderRadius: '12px', border: '1px solid var(--border-color)', fontSize: '13px' }}>
+                      {trackingData?.ambulanceLatitude ? (
+                        <>
+                          <div style={{ color: 'var(--accent-green)', fontWeight: 700 }}>✓ Ambulance Dispatched</div>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            <strong>Unit:</strong> {trackingData.ambulanceUnitId || 'AMB-' + trackingData.emergencyId}
+                          </p>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            <strong>Driver:</strong> {trackingData.driverName || 'Assigned'}
+                          </p>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            <strong>Status:</strong> <span className={`pill-status ${['EN_ROUTE_TO_PATIENT', 'ARRIVED_AT_PATIENT', 'PATIENT_PICKED_UP', 'EN_ROUTE_TO_HOSPITAL'].includes(trackingData.status) ? 'warning' : 'normal'}`}>{trackingData.status}</span>
+                          </p>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            <strong>ETA:</strong> {trackingData.eta || 'Calculating...'}
+                          </p>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            <strong>Progress:</strong> {((trackingData.progress || 0) * 100).toFixed(0)}%
+                          </p>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>
+                            <strong>Distance:</strong> {trackingData.distance ? `${trackingData.distance} km` : 'Calculating...'}
+                          </p>
+                          <p style={{ color: 'var(--text-muted)', fontSize: '11px', marginTop: '8px' }}>
+                            Last update: {trackingData.timestamp ? new Date(trackingData.timestamp).toLocaleTimeString() : 'Just now'}
+                          </p>
+                        </>
+                      ) : activeSos.requiresAmbulance ? (
+                        <>
+                          <div style={{ color: 'var(--accent-amber)', fontWeight: 700 }}>⏳ Ambulance Requested</div>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>Finding nearest available ambulance...</p>
+                        </>
+                      ) : (
+                        <>
+                          <div style={{ color: 'var(--accent-blue)', fontWeight: 700 }}>ℹ️ Ambulance Not Required</div>
+                          <p style={{ color: 'var(--text-secondary)', marginTop: '4px' }}>Patient will be transported by other means.</p>
+                        </>
+                      )}
+                    </div>
                   </div>
 
                   <div className="saas-card">

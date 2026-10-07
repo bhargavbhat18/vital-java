@@ -81,9 +81,11 @@ public class EmergencyWorkflowService {
         request.setDetectedVitals(String.format("HR: %.0f, SpO2: %.0f, Temp: %.1f", hr, spo2, temp));
         request.setCreatedAt(LocalDateTime.now());
         request.setStatus("DETECTED");
+        request.setRequiresAmbulance(risk.getRiskScore() >= 50 || "CRITICAL".equals(risk.getSeverity()) || "HIGH".equals(risk.getSeverity()));
         emergencyRepository.save(request);
 
         logEvent(request.getId(), "DETECTED", "Abnormal vitals detected: " + request.getDetectedVitals() + " (Risk Score: " + risk.getRiskScore() + ")");
+        broadcastWorkflowUpdate(request, "DETECTED");
 
         // Step 2: Classify department
         String department = classifyDepartment(patientUid);
@@ -106,9 +108,11 @@ public class EmergencyWorkflowService {
         } else {
             logEvent(request.getId(), "HOSPITAL_ASSIGNED", "No suitable hospital found.");
         }
+        broadcastWorkflowUpdate(request, "HOSPITAL_ASSIGNED");
 
         // Step 4: Assign Doctor
         assignDoctor(request);
+        broadcastWorkflowUpdate(request, "DOCTOR_ASSIGNED");
 
         // Step 5: Family member notifications
         familyNotificationService.sendFamilyNotification(
@@ -118,12 +122,17 @@ public class EmergencyWorkflowService {
                 "TBD"
         );
         logEvent(request.getId(), "FAMILY_NOTIFIED", "Family members notified of emergency status.");
+        broadcastWorkflowUpdate(request, "FAMILY_NOTIFIED");
 
-        // Step 6: Dispatch Ambulance
-        dispatchAmbulance(request);
-
-        // Broadcast workflow update
-        broadcastWorkflowUpdate(request);
+        // Step 6: Dispatch Ambulance (only if required)
+        if (Boolean.TRUE.equals(request.getRequiresAmbulance())) {
+            dispatchAmbulance(request);
+        } else {
+            request.setStatus("AMBULANCE_NOT_REQUIRED");
+            emergencyRepository.save(request);
+            logEvent(request.getId(), "AMBULANCE_NOT_REQUIRED", "Ambulance not required for this emergency.");
+            broadcastWorkflowUpdate(request, "AMBULANCE_NOT_REQUIRED");
+        }
 
         return request;
     }
@@ -132,7 +141,7 @@ public class EmergencyWorkflowService {
         request.setStatus("AMBULANCE_REQUESTED");
         emergencyRepository.save(request);
         logEvent(request.getId(), "AMBULANCE_REQUESTED", "Emergency ambulance request raised.");
-        broadcastWorkflowUpdate(request);
+        broadcastWorkflowUpdate(request, "AMBULANCE_REQUESTED");
 
         // Use new Uber-style ambulance request system
         ambulanceService.requestNearestAmbulance(request);
@@ -176,7 +185,7 @@ public class EmergencyWorkflowService {
             }
 
             logEvent(id, "RESOLVED", "Emergency resolved successfully. Resources released.");
-            broadcastWorkflowUpdate(req);
+            broadcastWorkflowUpdate(req, "RESOLVED");
         }
     }
 
@@ -216,11 +225,50 @@ public class EmergencyWorkflowService {
             }
 
             logEvent(id, "CANCELLED", "Emergency cancelled.");
-            broadcastWorkflowUpdate(req);
+            broadcastWorkflowUpdate(req, "CANCELLED");
         }
     }
 
+    public void onAmbulanceAccepted(EmergencyRequest request, Long ambulanceId) {
+        request.setAmbulanceId(ambulanceId);
+        request.setStatus("AMBULANCE_ACCEPTED");
+        request.setAmbulanceDispatched(true);
+        emergencyRepository.save(request);
+
+        logEvent(request.getId(), "AMBULANCE_ACCEPTED", "Ambulance accepted and dispatched.");
+        broadcastWorkflowUpdate(request, "AMBULANCE_ACCEPTED");
+    }
+
+    public void onAmbulanceEnRoute(EmergencyRequest request) {
+        request.setStatus("AMBULANCE_DISPATCHED");
+        emergencyRepository.save(request);
+        logEvent(request.getId(), "AMBULANCE_DISPATCHED", "Ambulance en route to patient.");
+        broadcastWorkflowUpdate(request, "AMBULANCE_DISPATCHED");
+    }
+
+    public void onPatientPickedUp(EmergencyRequest request) {
+        request.setStatus("PATIENT_PICKED_UP");
+        emergencyRepository.save(request);
+        logEvent(request.getId(), "PATIENT_PICKED_UP", "Patient picked up by ambulance.");
+        broadcastWorkflowUpdate(request, "PATIENT_PICKED_UP");
+    }
+
+    public void onArrivedAtHospital(EmergencyRequest request) {
+        request.setStatus("ARRIVED_AT_HOSPITAL");
+        emergencyRepository.save(request);
+        logEvent(request.getId(), "ARRIVED_AT_HOSPITAL", "Ambulance arrived at hospital with patient.");
+        broadcastWorkflowUpdate(request, "ARRIVED_AT_HOSPITAL");
+    }
+
     private void assignDoctor(EmergencyRequest request) {
+        if (request.getHospitalId() == null) {
+            request.setStatus("DOCTOR_ASSIGNED");
+            request.setDoctorId(-1L);
+            emergencyRepository.save(request);
+            logEvent(request.getId(), "DOCTOR_ASSIGNED", "No hospital assigned. Assigned to emergency duty team.");
+            return;
+        }
+
         List<Doctor> doctors = doctorRepository.findByHospitalIdAndDepartmentNameAndOnDutyAndAvailableForEmergency(
                 request.getHospitalId(), request.getRequiredDepartment(), true, true);
 
@@ -273,9 +321,54 @@ public class EmergencyWorkflowService {
         eventRepository.save(event);
     }
 
-    private void broadcastWorkflowUpdate(EmergencyRequest request) {
-        messagingTemplate.convertAndSend("/topic/emergency/" + request.getId(), (Object) request);
-        messagingTemplate.convertAndSend("/topic/emergency-updates", (Object) request);
+    private void broadcastWorkflowUpdate(EmergencyRequest request, String status) {
+        Map<String, Object> payload = new HashMap<>();
+        payload.put("emergencyId", request.getId());
+        payload.put("status", request.getStatus());
+        payload.put("patientUid", request.getPatientUid());
+        payload.put("patientName", getPatientName(request.getPatientUid()));
+        payload.put("riskScore", request.getRiskScore());
+        payload.put("severity", request.getSeverity());
+        payload.put("hospitalId", request.getHospitalId());
+        payload.put("doctorId", request.getDoctorId());
+        payload.put("ambulanceId", request.getAmbulanceId());
+        payload.put("requiresAmbulance", request.getRequiresAmbulance());
+        payload.put("latitude", request.getLatitude());
+        payload.put("longitude", request.getLongitude());
+        payload.put("createdAt", request.getCreatedAt());
+        payload.put("updatedAt", LocalDateTime.now());
+
+        Object wsPayload = payload;
+
+        // Broadcast to emergency-specific topic
+        messagingTemplate.convertAndSend("/topic/emergency/" + request.getId(), wsPayload);
+
+        // Broadcast to general emergency updates
+        messagingTemplate.convertAndSend("/topic/emergency-updates", wsPayload);
+
+        // Broadcast to hospital topic
+        if (request.getHospitalId() != null) {
+            messagingTemplate.convertAndSend("/topic/hospital/" + request.getHospitalId() + "/emergencies", wsPayload);
+        }
+
+        // Broadcast to doctor topic
+        if (request.getDoctorId() != null && request.getDoctorId() > 0) {
+            messagingTemplate.convertAndSend("/topic/doctor/" + request.getDoctorId() + "/emergencies", wsPayload);
+        }
+
+        // Broadcast to ambulance topic
+        if (request.getAmbulanceId() != null) {
+            messagingTemplate.convertAndSend("/topic/ambulance/" + request.getAmbulanceId(), wsPayload);
+        }
+
+        // Broadcast to family/patient topic
+        messagingTemplate.convertAndSend("/topic/family-notifications/" + request.getPatientUid(), wsPayload);
+    }
+
+    private String getPatientName(String patientUid) {
+        return userRepository.findByUid(patientUid)
+                .map(User::getFullName)
+                .orElse("Unknown Patient");
     }
 
     private double calculateDistance(double lat1, double lon1, double lat2, double lon2) {

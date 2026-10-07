@@ -1,5 +1,7 @@
 package com.vitaguard.backend_java.hospital;
 
+import com.vitaguard.backend_java.ambulance.Ambulance;
+import com.vitaguard.backend_java.ambulance.AmbulanceRepository;
 import com.vitaguard.backend_java.doctor.Doctor;
 import com.vitaguard.backend_java.doctor.DoctorRepository;
 import com.vitaguard.backend_java.emergency.EmergencyRequest;
@@ -25,19 +27,22 @@ public class HospitalController {
     private final DoctorRepository doctorRepository;
     private final EmergencyRequestRepository emergencyRepository;
     private final UserRepository userRepository;
+    private final AmbulanceRepository ambulanceRepository;
 
     public HospitalController(
             HospitalRepository hospitalRepository,
             HospitalDepartmentRepository departmentRepository,
             DoctorRepository doctorRepository,
             EmergencyRequestRepository emergencyRepository,
-            UserRepository userRepository
+            UserRepository userRepository,
+            AmbulanceRepository ambulanceRepository
     ) {
         this.hospitalRepository = hospitalRepository;
         this.departmentRepository = departmentRepository;
         this.doctorRepository = doctorRepository;
         this.emergencyRepository = emergencyRepository;
         this.userRepository = userRepository;
+        this.ambulanceRepository = ambulanceRepository;
     }
 
     @GetMapping
@@ -60,7 +65,7 @@ public class HospitalController {
 
         // Return only emergencies assigned to THIS hospital
         List<EmergencyRequest> emergencies = emergencyRepository.findByHospitalId(admin.getHospitalId());
-        return ResponseEntity.ok(emergencies);
+        return ResponseEntity.ok(enrichEmergencies(emergencies));
     }
 
     @GetMapping("/incoming")
@@ -78,11 +83,11 @@ public class HospitalController {
 
         // Return emergencies that are incoming (not yet resolved) for THIS hospital
         List<EmergencyRequest> emergencies = emergencyRepository.findByHospitalIdAndStatusIn(admin.getHospitalId(), List.of(
-                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
+                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
                 "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
-                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL"
+                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL", "AMBULANCE_NOT_REQUIRED"
         ));
-        return ResponseEntity.ok(emergencies);
+        return ResponseEntity.ok(enrichEmergencies(emergencies));
     }
 
     @GetMapping("/stats")
@@ -107,9 +112,9 @@ public class HospitalController {
         stats.put("hospital", hospital);
         stats.put("total_emergencies", emergencyRepository.countByHospitalId(admin.getHospitalId()));
         stats.put("active_emergencies", emergencyRepository.findByHospitalIdAndStatusIn(admin.getHospitalId(), List.of(
-                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
+                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
                 "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
-                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL"
+                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL", "AMBULANCE_NOT_REQUIRED"
         )).size());
         stats.put("available_beds", hospital.getAvailableBeds());
         stats.put("total_beds", hospital.getTotalBeds());
@@ -148,6 +153,24 @@ public class HospitalController {
                 hospital.setAvailableDoctors(Math.min(hospital.getTotalDoctors(), hospital.getAvailableDoctors() + 1));
                 hospitalRepository.save(hospital);
             }
+
+            // Release doctor
+            if (req.getDoctorId() != null && req.getDoctorId() > 0) {
+                doctorRepository.findById(req.getDoctorId()).ifPresent(doc -> {
+                    doc.setAvailableForEmergency(true);
+                    doctorRepository.save(doc);
+                });
+            }
+
+            // Release ambulance
+            if (req.getAmbulanceId() != null) {
+                ambulanceRepository.findById(req.getAmbulanceId()).ifPresent(amb -> {
+                    amb.setStatus("AVAILABLE");
+                    amb.setCurrentEmergencyId(null);
+                    ambulanceRepository.save(amb);
+                });
+            }
+
             Map<String, Object> res = new HashMap<>();
             res.put("success", true);
             res.put("sos_id", id.toString());
@@ -231,5 +254,72 @@ public class HospitalController {
                     return ResponseEntity.ok(doc);
                 })
                 .orElse(ResponseEntity.notFound().build());
+    }
+
+    private List<Map<String, Object>> enrichEmergencies(List<EmergencyRequest> emergencies) {
+        return emergencies.stream().map(this::enrichEmergency).toList();
+    }
+
+    private Map<String, Object> enrichEmergency(EmergencyRequest request) {
+        Map<String, Object> enriched = new HashMap<>();
+
+        enriched.put("id", request.getId());
+        enriched.put("patientUid", request.getPatientUid());
+        enriched.put("latitude", request.getLatitude());
+        enriched.put("longitude", request.getLongitude());
+        enriched.put("symptoms", request.getSymptoms());
+        enriched.put("symptomDescription", request.getSymptomDescription());
+        enriched.put("requiredDepartment", request.getRequiredDepartment());
+        enriched.put("hospitalId", request.getHospitalId());
+        enriched.put("doctorId", request.getDoctorId());
+        enriched.put("ambulanceId", request.getAmbulanceId());
+        enriched.put("status", request.getStatus());
+        enriched.put("createdAt", request.getCreatedAt());
+        enriched.put("acceptedAt", request.getAcceptedAt());
+        enriched.put("assignedAt", request.getAssignedAt());
+        enriched.put("completedAt", request.getCompletedAt());
+        enriched.put("cancelled", request.getCancelled());
+        enriched.put("smsSent", request.getSmsSent());
+        enriched.put("ambulanceDispatched", request.getAmbulanceDispatched());
+        enriched.put("requiresAmbulance", request.getRequiresAmbulance());
+        enriched.put("riskScore", request.getRiskScore());
+        enriched.put("severity", request.getSeverity());
+        enriched.put("detectedVitals", request.getDetectedVitals());
+
+        // Hospital info
+        if (request.getHospitalId() != null) {
+            hospitalRepository.findById(request.getHospitalId()).ifPresent(h -> {
+                enriched.put("hospitalName", h.getName());
+            });
+        }
+
+        // Doctor info
+        if (request.getDoctorId() != null && request.getDoctorId() > 0) {
+            doctorRepository.findById(request.getDoctorId()).ifPresent(d -> {
+                enriched.put("doctorName", d.getName());
+                enriched.put("doctorSpecialization", d.getSpecialization());
+            });
+        } else if (request.getDoctorId() != null && request.getDoctorId() == -1L) {
+            enriched.put("doctorName", "Emergency Team");
+        }
+
+        // Ambulance info
+        if (request.getAmbulanceId() != null) {
+            ambulanceRepository.findById(request.getAmbulanceId()).ifPresent(a -> {
+                enriched.put("ambulanceUnitId", a.getUnitId());
+                enriched.put("ambulanceStatus", a.getStatus());
+                if (a.getDriver() != null) {
+                    enriched.put("driverName", a.getDriver().getFullName());
+                }
+            });
+        }
+
+        // Patient info
+        userRepository.findByUid(request.getPatientUid()).ifPresent(p -> {
+            enriched.put("patientName", p.getFullName());
+            enriched.put("patientAge", p.getAge());
+        });
+
+        return enriched;
     }
 }

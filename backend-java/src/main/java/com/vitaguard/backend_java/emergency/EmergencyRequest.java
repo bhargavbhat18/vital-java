@@ -39,6 +39,7 @@ public class EmergencyRequest {
     private Boolean cancelled = false;
     private Boolean smsSent = false;
     private Boolean ambulanceDispatched = false;
+    private Boolean requiresAmbulance = true;
 
     private Integer riskScore;
     private String severity;
@@ -110,6 +111,9 @@ public class EmergencyRequest {
 
     public Boolean getAmbulanceDispatched() { return ambulanceDispatched; }
     public void setAmbulanceDispatched(Boolean ambulanceDispatched) { this.ambulanceDispatched = ambulanceDispatched; }
+
+    public Boolean getRequiresAmbulance() { return requiresAmbulance; }
+    public void setRequiresAmbulance(Boolean requiresAmbulance) { this.requiresAmbulance = requiresAmbulance; }
 
     public Integer getRiskScore() { return riskScore; }
     public void setRiskScore(Integer riskScore) { this.riskScore = riskScore; }

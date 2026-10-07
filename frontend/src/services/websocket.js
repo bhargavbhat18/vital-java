@@ -24,6 +24,7 @@ export function useRealtimeRefresh(uid, emergencyId, patientUid = uid) {
   const [connected, setConnected] = useState(false);
   const [revision, setRevision] = useState(0);
   const [tracking, setTracking] = useState(null);
+  const [ambulanceLocation, setAmbulanceLocation] = useState(null);
   const [client, setClient] = useState(null);
   const timer = useRef(null);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
@@ -64,15 +65,56 @@ export function useRealtimeRefresh(uid, emergencyId, patientUid = uid) {
       }, 500);
     };
     const topics = ['/topic/emergency-updates', '/topic/hospital-queue-refresh'];
-    if (patientUid) topics.push(`/topic/vitals/${patientUid}`, `/topic/ai-risk/${patientUid}`);
+    if (patientUid) topics.push(`/topic/vitals/${patientUid}`, `/topic/ai-risk/${patientUid}`, `/topic/family-notifications/${patientUid}`);
     if (emergencyId != null) topics.push(`/topic/emergency/${emergencyId}`);
+    // Add role-specific topics
+    const userRole = localStorage.getItem('userRole');
+    if (userRole === 'HOSPITAL_ADMIN') {
+      const hospitalId = localStorage.getItem('hospitalId');
+      if (hospitalId) topics.push(`/topic/hospital/${hospitalId}/emergencies`);
+    } else if (userRole === 'DOCTOR') {
+      const doctorId = localStorage.getItem('doctorId');
+      if (doctorId) topics.push(`/topic/doctor/${doctorId}/emergencies`);
+    } else if (userRole === 'AMBULANCE_DRIVER') {
+      const ambulanceId = localStorage.getItem('ambulanceId');
+      const driverId = localStorage.getItem('userId');
+      if (ambulanceId) topics.push(`/topic/ambulance/${ambulanceId}`);
+      if (driverId) topics.push(`/topic/ambulance/request/${driverId}`);
+    }
     const subscriptions = topics.map(topic => client.subscribe(topic, message => {
       scheduleRefresh();
-      if (topic !== `/topic/emergency/${emergencyId}`) return;
       try {
         const data = JSON.parse(message.body);
-        if (data && String(data.sosId) === String(emergencyId)) {
+        
+        // Handle ambulance location updates
+        if (topic.startsWith('/topic/ambulance/') && data.latitude != null && data.longitude != null) {
+          setAmbulanceLocation({
+            latitude: data.latitude,
+            longitude: data.longitude,
+            status: data.status,
+            ambulanceId: data.ambulanceId,
+            unitId: data.unitId,
+            timestamp: data.timestamp,
+            emergencyId: data.emergencyId,
+            distance: data.distance,
+            eta: data.eta
+          });
+        }
+        
+        // Handle emergency tracking updates - accept updates from all relevant topics
+        const isEmergencyUpdate = topic === `/topic/emergency/${emergencyId}` || 
+                                  topic === '/topic/emergency-updates' ||
+                                  (topic.startsWith('/topic/hospital/') && topic.endsWith('/emergencies')) ||
+                                  (topic.startsWith('/topic/doctor/') && topic.endsWith('/emergencies')) ||
+                                  topic.startsWith('/topic/ambulance/') ||
+                                  topic.startsWith('/topic/family-notifications/');
+        
+        if (isEmergencyUpdate && data && emergencyId != null && 
+            (String(data.emergencyId) === String(emergencyId) || String(data.sosId) === String(emergencyId))) {
           setTracking({ ...data, emergencyId });
+        }
+        if (topic.includes('ambulance/request') && data) {
+          setTracking({ ...data, emergencyId: data.emergencyId });
         }
       } catch {
         return;
@@ -87,5 +129,96 @@ export function useRealtimeRefresh(uid, emergencyId, patientUid = uid) {
     };
   }, [client, connected, patientUid, emergencyId, refresh]);
 
-  return { connected, revision, refresh, tracking: tracking?.emergencyId === emergencyId ? tracking : null };
+  return { connected, revision, refresh, tracking: tracking?.emergencyId === emergencyId ? tracking : null, ambulanceLocation };
+}
+
+// New hook for ambulance driver to send location updates
+export function useAmbulanceLocationSender() {
+  const [isTracking, setIsTracking] = useState(false);
+  const watchIdRef = useRef(null);
+  const intervalRef = useRef(null);
+
+  const startTracking = useCallback(() => {
+    if (isTracking) return;
+    
+    if (!navigator.geolocation) {
+      console.warn('Geolocation is not supported by this browser');
+      return;
+    }
+
+    setIsTracking(true);
+
+    // High accuracy GPS tracking
+    watchIdRef.current = navigator.geolocation.watchPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          const response = await fetch('http://localhost:8000/api/ambulance/location', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${localStorage.getItem('token')}`
+            },
+            body: JSON.stringify({ latitude, longitude })
+          });
+          if (!response.ok) {
+            console.error('Failed to send location update');
+          }
+        } catch (error) {
+          console.error('Error sending location:', error);
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+
+    // Also send periodic updates as backup
+    intervalRef.current = setInterval(async () => {
+      if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            const { latitude, longitude } = position.coords;
+            try {
+              await fetch('http://localhost:8000/api/ambulance/location', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  'Authorization': `Bearer ${localStorage.getItem('token')}`
+                },
+                body: JSON.stringify({ latitude, longitude })
+              });
+            } catch (error) {
+              console.error('Error sending periodic location:', error);
+            }
+          },
+          () => {},
+          { enableHighAccuracy: true, timeout: 5000 }
+        );
+      }
+    }, 30000); // Every 30 seconds
+  }, [isTracking]);
+
+  const stopTracking = useCallback(() => {
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
+    if (intervalRef.current !== null) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+    setIsTracking(false);
+  }, []);
+
+  useEffect(() => {
+    return () => stopTracking();
+  }, [stopTracking]);
+
+  return { isTracking, startTracking, stopTracking };
 }

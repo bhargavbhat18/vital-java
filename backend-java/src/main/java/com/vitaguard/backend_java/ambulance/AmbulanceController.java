@@ -188,6 +188,59 @@ public class AmbulanceController {
         return ResponseEntity.ok(Map.of("success", true, "status", status));
     }
 
+    @PostMapping("/location")
+    public ResponseEntity<?> updateLocation(@RequestBody Map<String, Object> body) {
+        String driverUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User driver = userRepository.findByUid(driverUid).orElse(null);
+
+        if (driver == null || !"AMBULANCE_DRIVER".equals(driver.getRole())) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can update location"));
+        }
+
+        if (driver.getAmbulanceId() == null) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
+        }
+
+        Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
+        if (ambulanceOpt.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "No ambulance assigned to this driver"));
+        }
+
+        Ambulance ambulance = ambulanceOpt.get();
+
+        // Only allow location updates when ambulance has an active emergency
+        if (ambulance.getCurrentEmergencyId() == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "No active emergency for this ambulance"));
+        }
+
+        Double lat = body.containsKey("latitude") ? Double.valueOf(body.get("latitude").toString()) : null;
+        Double lng = body.containsKey("longitude") ? Double.valueOf(body.get("longitude").toString()) : null;
+
+        if (lat == null || lng == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Latitude and longitude are required"));
+        }
+
+        // Update location without changing status
+        ambulance.setLatitude(lat);
+        ambulance.setLongitude(lng);
+        ambulanceRepository.save(ambulance);
+
+        // Broadcast location update via WebSocket
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("ambulanceId", ambulance.getId());
+        payload.put("unitId", ambulance.getUnitId());
+        payload.put("status", ambulance.getStatus());
+        payload.put("latitude", lat);
+        payload.put("longitude", lng);
+        payload.put("timestamp", java.time.LocalDateTime.now().toString());
+        payload.put("emergencyId", ambulance.getCurrentEmergencyId());
+
+        // The AmbulanceService will broadcast this
+        ambulanceService.updateAmbulanceStatus(ambulance.getId(), ambulance.getStatus(), lat, lng);
+
+        return ResponseEntity.ok(Map.of("success", true, "latitude", lat, "longitude", lng));
+    }
+
     private boolean isValidStatusTransition(String currentStatus, String newStatus) {
         if (currentStatus == null || newStatus == null) return false;
         

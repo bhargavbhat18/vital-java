@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../context/AuthContext';
 import API, { isActiveEmergency, useApiResource } from '../services/api';
 import { useRealtimeRefresh } from '../services/websocket';
-import MapComponent from '../components/MapComponent';
+import GoogleMapTracking from '../components/GoogleMapTracking';
 import EmergencyDetails from '../components/EmergencyDetails';
 
 const HealthcareDashboard = () => {
@@ -21,7 +21,7 @@ const HealthcareDashboard = () => {
   const [selectedPatientUid, setSelectedPatientUid] = useState(null);
   const [pendingRequests, setPendingRequests] = useState([]);
   const [currentJob, setCurrentJob] = useState(null);
-  const { connected: wsConnected, revision, refresh } = useRealtimeRefresh(user?.uid, selectedEmergencyId, selectedPatientUid);
+  const { connected: wsConnected, revision, refresh, tracking: _tracking, ambulanceLocation } = useRealtimeRefresh(user?.uid, selectedEmergencyId, selectedPatientUid);
   const { data: queue } = useApiResource(user ? '/hospital/emergencies' : null, revision);
   const emergencies = Array.isArray(queue) ? queue : [];
   const selectedEmergency = emergencies.find(emergency => emergency.id === selectedEmergencyId);
@@ -31,11 +31,26 @@ const HealthcareDashboard = () => {
     setSelectedPatientUid(emergency?.patientUid ?? null);
   };
 
+  // Store role-specific IDs for WebSocket topics
+  useEffect(() => {
+    if (user) {
+      localStorage.setItem('userRole', role || '');
+      if (role === 'HOSPITAL_ADMIN' && user.hospitalId) {
+        localStorage.setItem('hospitalId', user.hospitalId.toString());
+      } else if (role === 'DOCTOR' && user.id) {
+        localStorage.setItem('doctorId', user.id.toString());
+      } else if (role === 'AMBULANCE_DRIVER') {
+        if (user.ambulanceId) localStorage.setItem('ambulanceId', user.ambulanceId.toString());
+        if (user.id) localStorage.setItem('userId', user.id.toString());
+      }
+    }
+  }, [user, role]);
+
   // Set default tabs based on role
   useEffect(() => {
     if (role === 'DOCTOR') setActiveTab('cases');
     else if (role === 'HOSPITAL_ADMIN') setActiveTab('queue');
-    else if (role === 'AMBULANCE_DRIVER') setActiveTab('job');
+    else if (role === 'AMBULANCE_DRIVER') setActiveTab('requests');
     else if (role === 'ADMIN' || role === 'SYSTEM_ADMIN') setActiveTab('hospitals');
   }, [role]);
 
@@ -118,6 +133,46 @@ const HealthcareDashboard = () => {
       loadDriverData();
     }
   }, [revision, loadDriverData]);
+
+  // Start GPS tracking when driver has an active job
+  const [isTracking, setIsTracking] = useState(false);
+  const startGpsTracking = useCallback(async () => {
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by this browser');
+      return;
+    }
+    
+    setIsTracking(true);
+    
+    // Request permission and start watching position
+    navigator.geolocation.watchPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        try {
+          await API.post('/ambulance/location', { latitude, longitude });
+        } catch (error) {
+          console.error('Failed to send location update:', error);
+        }
+      },
+      (error) => {
+        console.error('Geolocation error:', error);
+        if (error.code === error.PERMISSION_DENIED) {
+          alert('Location permission denied. Please enable location access for live tracking.');
+          setIsTracking(false);
+        }
+      },
+      {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 0
+      }
+    );
+  }, []);
+
+  const stopGpsTracking = useCallback(() => {
+    setIsTracking(false);
+    // Note: In a real implementation, you'd store the watchId and clear it
+  }, []);
 
   const acceptCase = async (id) => {
     try {
@@ -242,8 +297,8 @@ const HealthcareDashboard = () => {
               </>
             )}
             {role === 'AMBULANCE_DRIVER' && (
-              <button className={`nav-link-btn ${activeTab === 'job' ? 'active' : ''}`} onClick={() => setActiveTab('job')}>
-                Active Job
+              <button className={`nav-link-btn ${activeTab === 'requests' ? 'active' : ''}`} onClick={() => setActiveTab('requests')}>
+                Emergency Requests
               </button>
             )}
             {role === 'ADMIN' && (
@@ -307,7 +362,7 @@ const HealthcareDashboard = () => {
               </div>
               <div className="saas-card" style={{ padding: '18px' }}>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>PATIENTS MONITORED</span>
-                <div style={{ fontSize: '26px', fontWeight: 800, marginTop: '4px' }}>{doctors.length}</div>
+                <div style={{ fontSize: '26px', fontWeight: 800, marginTop: '4px' }}>{emergencies.filter(e => e.status !== 'RESOLVED').length}</div>
               </div>
               <div className="saas-card" style={{ padding: '18px' }}>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>RESOLVED TODAY</span>
@@ -317,10 +372,65 @@ const HealthcareDashboard = () => {
               </div>
             </div>
 
+            {/* PROMINENT NEW CASE ALERT FOR DOCTOR */}
+            {activeEmergencies.filter(e => e.status === 'DOCTOR_ASSIGNED').map((alert, _idx) => (
+              <div key={alert.id} style={{ 
+                background: 'linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%)', 
+                border: '2px solid var(--accent-blue)', 
+                borderRadius: '16px', 
+                padding: '20px', 
+                marginBottom: '20px',
+                boxShadow: '0 4px 20px rgba(59, 130, 246, 0.15)',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                  <div>
+                    <h2 style={{ color: 'var(--accent-blue)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '20px', fontWeight: 800, margin: 0 }}>
+                      🚨 NEW CASE ASSIGNED
+                    </h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px', marginBottom: '0' }}>
+                      <strong>Patient:</strong> {alert.patientName || alert.patientUid}
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginTop: '12px', fontSize: '13px' }}>
+                      <span style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, color: 'var(--accent-blue)' }}>
+                        Severity: {alert.severity}
+                      </span>
+                      <span style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, color: 'var(--accent-blue)' }}>
+                        Risk Score: {alert.riskScore}/100
+                      </span>
+                      <span style={{ background: 'rgba(59, 130, 246, 0.1)', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, color: 'var(--accent-blue)' }}>
+                        Dept: {alert.requiredDepartment}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', minWidth: '200px' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>VITALS</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{alert.detectedVitals}</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: '4px' }}>LOCATION</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                      {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: '4px' }}>AMBULANCE</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: alert.requiresAmbulance ? 'var(--accent-red)' : 'var(--accent-blue)' }}>
+                      {alert.requiresAmbulance ? '🚑 REQUIRED' : '✓ NOT REQUIRED'}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid rgba(59, 130, 246, 0.2)' }}>
+                  <button 
+                    onClick={() => setSelectedEmergency(alert)}
+                    className="btn-primary" 
+                    style={{ background: 'var(--accent)', flex: 1 }}
+                  >
+                    👁 VIEW CASE
+                  </button>
+                </div>
+              </div>
+            ))}
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2.2fr', gap: '20px' }} className="saas-grid-layout">
               {/* List */}
               <div className="saas-card" style={{ maxHeight: '550px', overflowY: 'auto' }}>
-                <h3 className="card-title" style={{ marginBottom: '16px' }}>🚨 Emergency Queue</h3>
+                <h3 className="card-title" style={{ marginBottom: '16px' }}>🚨 My Assigned Emergencies</h3>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   {activeEmergencies.map(eq => (
                     <div 
@@ -331,15 +441,23 @@ const HealthcareDashboard = () => {
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 700, fontSize: '13px' }}>
                         <span>SOS-{eq.id}</span>
-                        <span className={`pill-status ${eq.severity === 'CRITICAL' ? 'critical' : 'warning'}`}>{eq.severity}</span>
+                        <span className={`pill-status ${eq.severity === 'CRITICAL' ? 'critical' : eq.severity === 'HIGH' ? 'warning' : 'normal'}`}>{eq.severity}</span>
                       </div>
                       <p style={{ fontSize: '12px', marginTop: '6px', color: 'var(--text-secondary)' }}>
+                        <strong>Patient:</strong> {eq.patientName || eq.patientUid}
+                      </p>
+                      <p style={{ fontSize: '12px', marginTop: '4px', color: 'var(--text-secondary)' }}>
                         <strong>Vitals:</strong> {eq.detectedVitals}
                       </p>
+                      <div style={{ display: 'flex', gap: '16px', fontSize: '11px', color: 'var(--text-muted)', marginTop: '8px' }}>
+                        <span>Risk: <strong>{eq.riskScore}/100</strong></span>
+                        <span>Status: <strong>{eq.status}</strong></span>
+                        <span>Amb: <strong>{eq.ambulanceUnitId ? eq.ambulanceStatus : (eq.requiresAmbulance ? 'Requested' : 'N/A')}</strong></span>
+                      </div>
                     </div>
                   ))}
-                  {emergencies.filter(e => e.status !== 'RESOLVED').length === 0 && (
-                    <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>No active cases.</p>
+                  {activeEmergencies.length === 0 && (
+                    <p style={{ color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center', padding: '20px 0' }}>No active assigned cases.</p>
                   )}
                 </div>
               </div>
@@ -351,16 +469,69 @@ const HealthcareDashboard = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h2 style={{ fontSize: '18px', fontWeight: 800 }}>Incident SOS-{selectedEmergency.id}</h2>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                        {selectedEmergency.status === 'HOSPITAL_ASSIGNED' && (
-                          <button onClick={() => acceptCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-green)' }}>
-                            ✓ Accept Case & Dispatch
-                          </button>
-                        )}
                         <button onClick={() => resolveCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-green)' }}>
                           🏁 Mark Case Resolved
                         </button>
                       </div>
                     </div>
+
+                    <div style={{ background: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontWeight: 700, marginBottom: '12px' }}>Patient Summary</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '13px' }}>
+                        <p><strong>Patient:</strong> {selectedEmergency.patientName || selectedEmergency.patientUid}</p>
+                        <p><strong>Age:</strong> {selectedEmergency.patientAge || 'N/A'}</p>
+                        <p><strong>Blood Group:</strong> {selectedEmergency.patientBloodGroup || 'N/A'}</p>
+                        <p><strong>Severity:</strong> <span className={`pill-status ${selectedEmergency.severity === 'CRITICAL' ? 'critical' : 'warning'}`}>{selectedEmergency.severity}</span></p>
+                        <p><strong>Risk Score:</strong> {selectedEmergency.riskScore}/100</p>
+                        <p><strong>Department:</strong> {selectedEmergency.requiredDepartment}</p>
+                        <p><strong>Hospital:</strong> {selectedEmergency.hospitalName || 'N/A'}</p>
+                        <p><strong>Ambulance:</strong> {selectedEmergency.ambulanceUnitId ? `${selectedEmergency.ambulanceUnitId} (${selectedEmergency.ambulanceStatus || 'En Route'})` : (selectedEmergency.requiresAmbulance ? 'Requested' : 'Not Required')}</p>
+                        <p><strong>Status:</strong> <span className={`pill-status ${['AMBULANCE_REQUESTED', 'AMBULANCE_ACCEPTED', 'AMBULANCE_DISPATCHED', 'EN_ROUTE_TO_PATIENT', 'ARRIVED_AT_PATIENT', 'PATIENT_PICKED_UP', 'EN_ROUTE_TO_HOSPITAL'].includes(selectedEmergency.status) ? 'warning' : 'normal'}`}>{selectedEmergency.status}</span></p>
+                        <p><strong>Created:</strong> {selectedEmergency.createdAt ? new Date(selectedEmergency.createdAt).toLocaleString() : 'N/A'}</p>
+                        <p><strong>Vitals:</strong> {selectedEmergency.detectedVitals}</p>
+                      </div>
+                    </div>
+
+                    {selectedEmergency.ambulanceUnitId && selectedEmergency.requiresAmbulance && (
+                      <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                        <h4 style={{ fontWeight: 700, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          🗺️ Live Ambulance Tracking
+                        </h4>
+                        <div style={{ height: '350px', borderRadius: '12px', overflow: 'hidden' }}>
+                          <GoogleMapTracking
+                            patientLocation={[selectedEmergency.latitude, selectedEmergency.longitude]}
+                            hospitalLocation={selectedEmergency.hospitalLat && selectedEmergency.hospitalLng ? [selectedEmergency.hospitalLat, selectedEmergency.hospitalLng] : null}
+                            ambulanceLocation={ambulanceLocation ? [ambulanceLocation.latitude, ambulanceLocation.longitude] : (selectedEmergency.ambulanceLat && selectedEmergency.ambulanceLng ? [selectedEmergency.ambulanceLat, selectedEmergency.ambulanceLng] : null)}
+                            ambulanceStatus={selectedEmergency.status}
+                            ambulanceUnitId={selectedEmergency.ambulanceUnitId}
+                            driverName={selectedEmergency.driverName}
+                            emergencyId={selectedEmergency.id}
+                            followAmbulance={false}
+                            showRoute={true}
+                            height="350px"
+                          />
+                        </div>
+                        <div style={{ marginTop: '12px', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '13px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                              <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>🚑 {selectedEmergency.ambulanceUnitId}</span>
+                              <span className={`pill-status ${['EN_ROUTE_TO_PATIENT', 'ARRIVED_AT_PATIENT', 'PATIENT_PICKED_UP', 'EN_ROUTE_TO_HOSPITAL'].includes(selectedEmergency.status) ? 'warning' : 'normal'}`}>
+                                {selectedEmergency.status}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '20px' }}>
+                              {ambulanceLocation && ambulanceLocation.distance !== undefined && (
+                                <span style={{ fontWeight: 600 }}>📏 {ambulanceLocation.distance} km</span>
+                              )}
+                              {ambulanceLocation && ambulanceLocation.eta !== undefined && (
+                                <span style={{ fontWeight: 600, color: 'var(--accent-blue)' }}>⏱️ {ambulanceLocation.eta} min</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     <EmergencyDetails emergencyId={selectedEmergency.id} revision={revision} />
                   </div>
                 ) : (
@@ -385,7 +556,7 @@ const HealthcareDashboard = () => {
               <div className="saas-card" style={{ padding: '18px' }}>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 600 }}>INCOMING EMERGENCIES</span>
                 <div style={{ fontSize: '26px', fontWeight: 800, marginTop: '4px', color: 'var(--accent-red)' }}>
-                  {emergencies.filter(e => e.status !== 'RESOLVED').length}
+                  {emergencies.filter(e => e.status !== 'RESOLVED' && e.status !== 'CANCELLED').length}
                 </div>
               </div>
               <div className="saas-card" style={{ padding: '18px' }}>
@@ -408,6 +579,75 @@ const HealthcareDashboard = () => {
               </div>
             </div>
 
+            {/* PROMINENT INCOMING EMERGENCY ALERT */}
+            {emergencies.filter(e => e.status === 'HOSPITAL_ASSIGNED').map((alert, _idx) => (
+              <div key={alert.id} style={{ 
+                background: 'linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%)', 
+                border: '2px solid var(--accent-red)', 
+                borderRadius: '16px', 
+                padding: '20px', 
+                marginBottom: '20px',
+                boxShadow: '0 4px 20px rgba(239, 68, 68, 0.15)',
+                animation: 'pulse 2s infinite'
+              }}>
+                <style jsx>{`
+                  @keyframes pulse {
+                    0%, 100% { box-shadow: 0 4px 20px rgba(239, 68, 68, 0.15); }
+                    50% { box-shadow: 0 4px 30px rgba(239, 68, 68, 0.3); }
+                  }
+                `}</style>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '16px' }}>
+                  <div>
+                    <h2 style={{ color: 'var(--accent-red)', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '20px', fontWeight: 800, margin: 0 }}>
+                      🚨 NEW EMERGENCY REQUEST
+                    </h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px', marginBottom: '0' }}>
+                      <strong>Patient:</strong> {alert.patientName || alert.patientUid}
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '16px', marginTop: '12px', fontSize: '13px' }}>
+                      <span style={{ background: 'rgba(239, 68, 68, 0.1)', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, color: 'var(--accent-red)' }}>
+                        Severity: {alert.severity}
+                      </span>
+                      <span style={{ background: 'rgba(239, 68, 68, 0.1)', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, color: 'var(--accent-red)' }}>
+                        Risk Score: {alert.riskScore}/100
+                      </span>
+                      <span style={{ background: 'rgba(239, 68, 68, 0.1)', padding: '4px 10px', borderRadius: '6px', fontWeight: 700, color: 'var(--accent-red)' }}>
+                        Dept: {alert.requiredDepartment}
+                      </span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', minWidth: '200px' }}>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '4px' }}>VITALS</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>{alert.detectedVitals}</div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: '4px' }}>LOCATION</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'monospace' }}>
+                      {alert.latitude?.toFixed(4)}, {alert.longitude?.toFixed(4)}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '8px', marginBottom: '4px' }}>AMBULANCE</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: alert.requiresAmbulance ? 'var(--accent-red)' : 'var(--accent-blue)' }}>
+                      {alert.requiresAmbulance ? '🚑 REQUIRED' : '✓ NOT REQUIRED'}
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '12px', marginTop: '20px', paddingTop: '16px', borderTop: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                  <button 
+                    onClick={() => setSelectedEmergency(alert)}
+                    className="btn-primary" 
+                    style={{ background: 'var(--accent)', flex: 1 }}
+                  >
+                    👁 VIEW EMERGENCY
+                  </button>
+                  <button 
+                    onClick={() => acceptCase(alert.id)}
+                    className="btn-primary" 
+                    style={{ background: 'var(--accent-green)', flex: 1, fontWeight: 800, fontSize: '14px' }}
+                  >
+                    ✓ ACCEPT & DISPATCH
+                  </button>
+                </div>
+              </div>
+            ))}
+
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }} className="saas-grid-layout">
               {/* Queue List */}
               <div className="saas-card">
@@ -419,7 +659,7 @@ const HealthcareDashboard = () => {
                     if (aCrit && !bCrit) return -1;
                     if (!aCrit && bCrit) return 1;
                     return (b.riskScore || 0) - (a.riskScore || 0);
-                  }).map(eq => (
+                  }).filter(e => e.status !== 'RESOLVED' && e.status !== 'CANCELLED').map(eq => (
                     <div 
                       key={eq.id} 
                       className={`queue-item-card ${selectedEmergency?.id === eq.id ? 'active-select' : ''}`}
@@ -430,15 +670,19 @@ const HealthcareDashboard = () => {
                         <span>SOS-{eq.id}</span>
                         <span className={`pill-status ${eq.severity === 'CRITICAL' ? 'critical' : eq.severity === 'HIGH' ? 'warning' : 'normal'}`}>{eq.severity}</span>
                       </div>
-                      <p style={{ fontSize: '12px', marginTop: '4px', color: 'var(--text-secondary)' }}>Symptoms: {eq.symptoms}</p>
+                      <p style={{ fontSize: '12px', marginTop: '4px', color: 'var(--text-secondary)' }}>Patient: {eq.patientName || eq.patientUid}</p>
+                      <p style={{ fontSize: '12px', marginTop: '4px', color: 'var(--text-secondary)' }}>Vitals: {eq.detectedVitals}</p>
+                      <p style={{ fontSize: '12px', marginTop: '4px', color: 'var(--text-secondary)' }}>Dept: {eq.requiredDepartment}</p>
                       
                       <div style={{ marginTop: '8px', fontSize: '11px', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed var(--border-color)', paddingTop: '6px' }}>
-                        <span>Unified Risk: <strong>{eq.riskScore || 0}/100</strong></span>
-                        <span>State: <strong>{eq.status}</strong></span>
+                        <span>Risk: <strong>{eq.riskScore || 0}/100</strong></span>
+                        <span>Status: <strong>{eq.status}</strong></span>
+                        <span>Dr: <strong>{eq.doctorName || 'Unassigned'}</strong></span>
+                        <span>Amb: <strong>{eq.ambulanceUnitId ? 'Assigned' : (eq.requiresAmbulance ? 'Requested' : 'Not Required')}</strong></span>
                       </div>
                     </div>
                   ))}
-                  {emergencies.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>No active alerts.</p>}
+                  {emergencies.filter(e => e.status !== 'RESOLVED' && e.status !== 'CANCELLED').length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>No active alerts.</p>}
                 </div>
               </div>
 
@@ -448,17 +692,76 @@ const HealthcareDashboard = () => {
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <h3 style={{ fontSize: '16px', fontWeight: 800 }}>Incident SOS-{selectedEmergency.id} Details</h3>
-                      {selectedEmergency.status === 'HOSPITAL_ASSIGNED' && (
-                        <button onClick={() => acceptCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-green)' }}>
-                          ✓ Accept Case & Dispatch
-                        </button>
-                      )}
-                      {['ACCEPTED', 'DOCTOR_ASSIGNED', 'AMBULANCE_DISPATCHED', 'AMBULANCE_EN_ROUTE', 'PATIENT_PICKED_UP', 'ARRIVED_AT_HOSPITAL'].includes(selectedEmergency.status) && (
-                        <button onClick={() => resolveCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-blue)' }}>
-                          🏁 Resolve Incident
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {selectedEmergency.status === 'HOSPITAL_ASSIGNED' && (
+                          <button onClick={() => acceptCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-green)' }}>
+                            ✓ Accept Case & Dispatch
+                          </button>
+                        )}
+                        {['ACCEPTED', 'DOCTOR_ASSIGNED', 'FAMILY_NOTIFIED', 'AMBULANCE_REQUESTED', 'AMBULANCE_ACCEPTED', 'AMBULANCE_DISPATCHED', 'EN_ROUTE_TO_PATIENT', 'ARRIVED_AT_PATIENT', 'PATIENT_PICKED_UP', 'EN_ROUTE_TO_HOSPITAL', 'ARRIVED_AT_HOSPITAL'].includes(selectedEmergency.status) && (
+                          <button onClick={() => resolveCase(selectedEmergency.id)} className="btn-primary" style={{ background: 'var(--accent-blue)' }}>
+                            🏁 Resolve Incident
+                          </button>
+                        )}
+                      </div>
                     </div>
+
+                    <div style={{ background: '#f8fafc', border: '1px solid var(--border-color)', borderRadius: '12px', padding: '16px' }}>
+                      <h4 style={{ fontWeight: 700, marginBottom: '12px' }}>Emergency Summary</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', fontSize: '13px' }}>
+                        <p><strong>Patient:</strong> {selectedEmergency.patientName || selectedEmergency.patientUid}</p>
+                        <p><strong>Age:</strong> {selectedEmergency.patientAge || 'N/A'}</p>
+                        <p><strong>Severity:</strong> <span className={`pill-status ${selectedEmergency.severity === 'CRITICAL' ? 'critical' : 'warning'}`}>{selectedEmergency.severity}</span></p>
+                        <p><strong>Risk Score:</strong> {selectedEmergency.riskScore}/100</p>
+                        <p><strong>Department:</strong> {selectedEmergency.requiredDepartment}</p>
+                        <p><strong>Hospital:</strong> {selectedEmergency.hospitalName || 'Assigned'}</p>
+                        <p><strong>Doctor:</strong> {selectedEmergency.doctorName || 'Unassigned'}</p>
+                        <p><strong>Ambulance:</strong> {selectedEmergency.ambulanceUnitId ? `${selectedEmergency.ambulanceUnitId} (${selectedEmergency.ambulanceStatus || 'En Route'})` : (selectedEmergency.requiresAmbulance ? 'Requested' : 'Not Required')}</p>
+                        <p><strong>Status:</strong> <span className={`pill-status ${['AMBULANCE_REQUESTED', 'AMBULANCE_ACCEPTED', 'AMBULANCE_DISPATCHED', 'EN_ROUTE_TO_PATIENT', 'ARRIVED_AT_PATIENT', 'PATIENT_PICKED_UP', 'EN_ROUTE_TO_HOSPITAL'].includes(selectedEmergency.status) ? 'warning' : 'normal'}`}>{selectedEmergency.status}</span></p>
+                        <p><strong>Created:</strong> {selectedEmergency.createdAt ? new Date(selectedEmergency.createdAt).toLocaleString() : 'N/A'}</p>
+                        <p><strong>Vitals:</strong> {selectedEmergency.detectedVitals}</p>
+                      </div>
+                    </div>
+
+                    {selectedEmergency.ambulanceUnitId && selectedEmergency.requiresAmbulance && (
+                      <div style={{ marginTop: '16px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                        <h4 style={{ fontWeight: 700, marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          🗺️ Live Ambulance Tracking
+                        </h4>
+                        <div style={{ height: '350px', borderRadius: '12px', overflow: 'hidden' }}>
+                          <GoogleMapTracking
+                            patientLocation={[selectedEmergency.latitude, selectedEmergency.longitude]}
+                            hospitalLocation={selectedEmergency.hospitalLat && selectedEmergency.hospitalLng ? [selectedEmergency.hospitalLat, selectedEmergency.hospitalLng] : null}
+                            ambulanceLocation={ambulanceLocation ? [ambulanceLocation.latitude, ambulanceLocation.longitude] : (selectedEmergency.ambulanceLat && selectedEmergency.ambulanceLng ? [selectedEmergency.ambulanceLat, selectedEmergency.ambulanceLng] : null)}
+                            ambulanceStatus={selectedEmergency.status}
+                            ambulanceUnitId={selectedEmergency.ambulanceUnitId}
+                            driverName={selectedEmergency.driverName}
+                            emergencyId={selectedEmergency.id}
+                            followAmbulance={false}
+                            showRoute={true}
+                            height="350px"
+                          />
+                        </div>
+                        <div style={{ marginTop: '12px', padding: '12px', background: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-color)', fontSize: '13px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                              <span style={{ fontWeight: 600, color: 'var(--text-secondary)' }}>🚑 {selectedEmergency.ambulanceUnitId}</span>
+                              <span className={`pill-status ${['EN_ROUTE_TO_PATIENT', 'ARRIVED_AT_PATIENT', 'PATIENT_PICKED_UP', 'EN_ROUTE_TO_HOSPITAL'].includes(selectedEmergency.status) ? 'warning' : 'normal'}`}>
+                                {selectedEmergency.status}
+                              </span>
+                            </div>
+                            <div style={{ display: 'flex', gap: '20px' }}>
+                              {ambulanceLocation && ambulanceLocation.distance !== undefined && (
+                                <span style={{ fontWeight: 600 }}>📏 {ambulanceLocation.distance} km</span>
+                              )}
+                              {ambulanceLocation && ambulanceLocation.eta !== undefined && (
+                                <span style={{ fontWeight: 600, color: 'var(--accent-blue)' }}>⏱️ {ambulanceLocation.eta} min</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
 
                     <EmergencyDetails emergencyId={selectedEmergency.id} revision={revision} />
                   </div>
@@ -523,41 +826,141 @@ const HealthcareDashboard = () => {
         )}
 
         {/* 3. AMBULANCE DRIVER PORTAL */}
-        {role === 'AMBULANCE_DRIVER' && activeTab === 'job' && (
+        {role === 'AMBULANCE_DRIVER' && activeTab === 'requests' && (
           <div className="saas-card" style={{ maxWidth: '800px', margin: '0 auto' }}>
             <h3 className="card-title" style={{ marginBottom: '20px' }}>🚑 Ambulance Dispatch Console</h3>
             
-            {emergencies.filter(e => ['AMBULANCE_DISPATCHED', 'AMBULANCE_EN_ROUTE', 'PATIENT_PICKED_UP', 'ARRIVED_AT_HOSPITAL'].includes(e.status)).length > 0 ? (
-              (() => {
-                const activeJob = emergencies.find(e => ['AMBULANCE_DISPATCHED', 'AMBULANCE_EN_ROUTE', 'PATIENT_PICKED_UP', 'ARRIVED_AT_HOSPITAL'].includes(e.status));
-                return (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-                    <div style={{ background: '#fff1f0', border: '1px solid #ffccc7', padding: '16px', borderRadius: '12px' }}>
-                      <h4 style={{ color: 'var(--accent-red)', fontWeight: 800, fontSize: '15px' }}>🚨 ACTIVE EMERGENCY RESPONSE ASSIGNED</h4>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px', marginTop: '10px' }}>
-                        <p><strong>Patient coords:</strong> {activeJob.latitude.toFixed(4)}, {activeJob.longitude.toFixed(4)}</p>
-                        <p><strong>Destination Hospital ID:</strong> Hospital {activeJob.hospitalId}</p>
-                        <p><strong>Current status:</strong> {activeJob.status}</p>
+            {/* Pending Requests */}
+            {pendingRequests.length > 0 && (
+              <div style={{ marginBottom: '24px' }}>
+                <h4 style={{ color: 'var(--accent-red)', fontWeight: 800, fontSize: '15px', marginBottom: '16px' }}>🚨 PENDING EMERGENCY REQUESTS</h4>
+                {pendingRequests.map(req => (
+                  <div key={req.id} style={{ background: '#fff1f0', border: '1px solid #ffccc7', padding: '16px', borderRadius: '12px', marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '14px', color: 'var(--accent-red)' }}>Emergency SOS-{req.emergencyId}</div>
+                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          <strong>Patient:</strong> {req.patientName} | <strong>Severity:</strong> <span className={`pill-status ${req.severity === 'CRITICAL' ? 'critical' : 'warning'}`}>{req.severity}</span> | <strong>Risk:</strong> {req.riskScore}/100
+                        </div>
+                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          <strong>Pickup:</strong> {req.pickupLat?.toFixed(4)}, {req.pickupLng?.toFixed(4)} | <strong>Distance:</strong> {req.distanceKm} km | <strong>ETA:</strong> {req.etaMinutes} min
+                        </div>
+                        <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          <strong>Destination:</strong> {req.destinationHospital}
+                        </div>
                       </div>
                     </div>
-
-                    <div style={{ height: '350px', borderRadius: '14px', overflow: 'hidden' }}>
-                      <MapComponent
-                        patientLoc={[activeJob.latitude, activeJob.longitude]}
-                        hospitalLoc={[12.9252, 77.6011]}
-                        ambulanceLoc={[12.935, 77.61]}
-                      />
+                    <div style={{ display: 'flex', gap: '12px' }}>
+                      <button onClick={() => acceptRequest(req.id)} className="btn-primary" style={{ background: 'var(--accent-green)', flex: 1 }}>
+                        ✓ ACCEPT
+                      </button>
+                      <button onClick={() => declineRequest(req.id)} className="btn-primary" style={{ background: 'var(--accent-red)', flex: 1 }}>
+                        ✗ DECLINE
+                      </button>
                     </div>
-
-                    <EmergencyDetails emergencyId={activeJob.id} revision={revision} />
-
-                    <button onClick={() => resolveCase(activeJob.id)} className="btn-primary" style={{ width: '100%', padding: '14px', background: 'var(--accent-green)' }}>
-                      ✓ Complete Route & Arrive at Hospital
-                    </button>
                   </div>
-                );
-              })()
-            ) : <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0', fontSize: '13px' }}>No active ambulance jobs allocated to your unit.</p>}
+                ))}
+              </div>
+            )}
+
+            {/* Current Active Job */}
+            {currentJob?.emergency && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', padding: '16px', borderRadius: '12px' }}>
+                  <h4 style={{ color: 'var(--accent-green)', fontWeight: 800, fontSize: '15px' }}>✅ ACTIVE EMERGENCY RESPONSE</h4>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px', marginTop: '10px' }}>
+                    <p><strong>Emergency ID:</strong> SOS-{currentJob.emergency.id}</p>
+                    <p><strong>Patient:</strong> {currentJob.emergency.patientName || currentJob.emergency.patientUid}</p>
+                    <p><strong>Current Status:</strong> {currentJob.emergency.status}</p>
+                    <p><strong>Ambulance:</strong> {currentJob.ambulance?.unitId}</p>
+                    <p><strong>Patient coords:</strong> {currentJob.emergency.latitude?.toFixed(4)}, {currentJob.emergency.longitude?.toFixed(4)}</p>
+                    <p><strong>Destination Hospital:</strong> {currentJob.emergency.hospitalName}</p>
+                  </div>
+                </div>
+
+                <div style={{ height: '450px', borderRadius: '14px', overflow: 'hidden' }}>
+                  <GoogleMapTracking
+                    patientLocation={[currentJob.emergency.latitude, currentJob.emergency.longitude]}
+                    hospitalLocation={currentJob.emergency.hospitalLat && currentJob.emergency.hospitalLng ? [currentJob.emergency.hospitalLat, currentJob.emergency.hospitalLng] : null}
+                    ambulanceLocation={ambulanceLocation ? [ambulanceLocation.latitude, ambulanceLocation.longitude] : (currentJob.ambulance?.latitude && currentJob.ambulance?.longitude ? [currentJob.ambulance.latitude, currentJob.ambulance.longitude] : null)}
+                    ambulanceStatus={currentJob.emergency.status}
+                    ambulanceUnitId={currentJob.ambulance?.unitId}
+                    driverName={currentJob.ambulance?.driver?.fullName}
+                    emergencyId={currentJob.emergency.id}
+                    followAmbulance={true}
+                    showRoute={true}
+                    height="450px"
+                  />
+                </div>
+
+                <EmergencyDetails emergencyId={currentJob.emergency.id} revision={revision} />
+
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                  <button onClick={() => updateAmbulanceStatus('EN_ROUTE_TO_PATIENT')} className="btn-primary" style={{ flex: 1, minWidth: '140px' }}>
+                    🚑 En Route to Patient
+                  </button>
+                  <button onClick={() => updateAmbulanceStatus('ARRIVED_AT_PATIENT')} className="btn-primary" style={{ flex: 1, minWidth: '140px' }}>
+                    📍 Arrived at Patient
+                  </button>
+                  <button onClick={() => updateAmbulanceStatus('PATIENT_PICKED_UP')} className="btn-primary" style={{ flex: 1, minWidth: '140px' }}>
+                    👤 Patient Picked Up
+                  </button>
+                  <button onClick={() => updateAmbulanceStatus('EN_ROUTE_TO_HOSPITAL')} className="btn-primary" style={{ flex: 1, minWidth: '140px' }}>
+                    🏥 En Route to Hospital
+                  </button>
+                  <button onClick={() => updateAmbulanceStatus('ARRIVED_AT_HOSPITAL')} className="btn-primary" style={{ flex: 1, minWidth: '140px', background: 'var(--accent-green)' }}>
+                    ✅ Arrived at Hospital
+                  </button>
+                </div>
+
+                {/* GPS Tracking Controls */}
+                <div style={{ 
+                  background: '#f8fafc', 
+                  border: '1px solid var(--border-color)', 
+                  borderRadius: '12px', 
+                  padding: '16px',
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  gap: '12px',
+                  flexWrap: 'wrap'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className={`pulse-dot ${wsConnected ? '' : 'disconnected'}`} style={{ width: '10px', height: '10px' }} />
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: wsConnected ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                      {wsConnected ? 'Live GPS Connected' : 'GPS Disconnected'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {!isTracking ? (
+                      <button 
+                        onClick={startGpsTracking} 
+                        className="btn-primary" 
+                        style={{ background: 'var(--accent-green)' }}
+                      >
+                        📍 Start Live GPS Tracking
+                      </button>
+                    ) : (
+                      <button 
+                        onClick={stopGpsTracking} 
+                        className="btn-primary" 
+                        style={{ background: 'var(--accent-amber)' }}
+                      >
+                        ⏹️ Stop GPS Tracking
+                      </button>
+                    )}
+                    {ambulanceLocation && (
+                      <span style={{ fontSize: '12px', color: 'var(--text-muted)', paddingTop: '4px' }}>
+                        Last update: {new Date(ambulanceLocation.timestamp).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {!pendingRequests.length && !currentJob?.emergency && (
+              <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px 0', fontSize: '13px' }}>No active ambulance requests or jobs allocated to your unit.</p>
+            )}
           </div>
         )}
 

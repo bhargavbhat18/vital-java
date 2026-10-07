@@ -4,6 +4,8 @@ import com.vitaguard.backend_java.ambulance.Ambulance;
 import com.vitaguard.backend_java.ambulance.AmbulanceRepository;
 import com.vitaguard.backend_java.hospital.Hospital;
 import com.vitaguard.backend_java.hospital.HospitalRepository;
+import com.vitaguard.backend_java.doctor.Doctor;
+import com.vitaguard.backend_java.doctor.DoctorRepository;
 import com.vitaguard.backend_java.user.User;
 import com.vitaguard.backend_java.user.UserRepository;
 import org.springframework.http.HttpStatus;
@@ -24,6 +26,7 @@ public class EmergencyController {
     private final EmergencyService emergencyService;
     private final EmergencyRequestRepository emergencyRepository;
     private final HospitalRepository hospitalRepository;
+    private final DoctorRepository doctorRepository;
     private final AmbulanceRepository ambulanceRepository;
     private final UserRepository userRepository;
 
@@ -31,12 +34,14 @@ public class EmergencyController {
             EmergencyService emergencyService,
             EmergencyRequestRepository emergencyRepository,
             HospitalRepository hospitalRepository,
+            DoctorRepository doctorRepository,
             AmbulanceRepository ambulanceRepository,
             UserRepository userRepository
     ) {
         this.emergencyService = emergencyService;
         this.emergencyRepository = emergencyRepository;
         this.hospitalRepository = hospitalRepository;
+        this.doctorRepository = doctorRepository;
         this.ambulanceRepository = ambulanceRepository;
         this.userRepository = userRepository;
     }
@@ -47,7 +52,7 @@ public class EmergencyController {
 
         String alertMessage = (String) body.getOrDefault("alert_message", "Emergency Alert");
         String symptomDescription = (String) body.getOrDefault("description", "");
-        
+
         // Parse list of symptoms
         List<String> symptomsList = (List<String>) body.get("symptoms");
         String symptoms = symptomsList != null ? String.join(",", symptomsList) : alertMessage;
@@ -58,6 +63,17 @@ public class EmergencyController {
         if (location != null) {
             lat = ((Number) location.getOrDefault("lat", 12.9716)).doubleValue();
             lng = ((Number) location.getOrDefault("lng", 77.5946)).doubleValue();
+        }
+
+        // Check for duplicate active emergency
+        List<EmergencyRequest> activeEmergencies = emergencyRepository.findByPatientUidAndStatusIn(patientUid, List.of(
+                "CREATED", "SEARCHING_HOSPITAL", "DETECTED", "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED",
+                "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED", "AMBULANCE_DISPATCHED",
+                "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP", "EN_ROUTE_TO_HOSPITAL",
+                "ARRIVED_AT_HOSPITAL"
+        ));
+        if (!activeEmergencies.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Active emergency already exists for this patient"));
         }
 
         EmergencyRequest request = emergencyService.triggerSos(patientUid, lat, lng, symptoms, symptomDescription);
@@ -86,7 +102,7 @@ public class EmergencyController {
         // System Admin: all emergencies
         boolean isAuthorized = false;
         String role = requester.getRole();
-        
+
         if (requesterUid.equals(request.getPatientUid())) {
             isAuthorized = true; // Patient owns the emergency
         } else if ("FAMILY_MEMBER".equals(role)) {
@@ -104,6 +120,11 @@ public class EmergencyController {
             if (requester.getHospitalId() != null && request.getHospitalId() != null) {
                 isAuthorized = requester.getHospitalId().equals(request.getHospitalId());
             }
+        } else if ("AMBULANCE_DRIVER".equals(role)) {
+            // Ambulance driver can access emergencies assigned to their ambulance
+            if (request.getAmbulanceId() != null && requester.getAmbulanceId() != null) {
+                isAuthorized = requester.getAmbulanceId().equals(request.getAmbulanceId());
+            }
         } else if ("SYSTEM_ADMIN".equals(role)) {
             isAuthorized = true;
         }
@@ -114,14 +135,54 @@ public class EmergencyController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(err);
         }
 
-        return ResponseEntity.ok(request);
+        return ResponseEntity.ok(enrichEmergency(request));
     }
 
     @PostMapping("/{id}/accept")
     public ResponseEntity<?> acceptCase(@PathVariable Long id) {
+        String requesterUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User requester = userRepository.findByUid(requesterUid).orElse(null);
+
+        if (requester == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        // Verify role is HOSPITAL_ADMIN
+        if (!"HOSPITAL_ADMIN".equals(requester.getRole())) {
+            Map<String, String> err = new HashMap<>();
+            err.put("error", "Only hospital administrators can accept emergencies");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(err);
+        }
+
+        // Verify hospital admin is linked to a hospital
+        if (requester.getHospitalId() == null) {
+            Map<String, String> err = new HashMap<>();
+            err.put("error", "Hospital admin not linked to a hospital");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(err);
+        }
+
+        EmergencyRequest request = emergencyRepository.findById(id).orElse(null);
+        if (request == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // Verify emergency belongs to this hospital
+        if (!requester.getHospitalId().equals(request.getHospitalId())) {
+            Map<String, String> err = new HashMap<>();
+            err.put("error", "This emergency is not assigned to your hospital");
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(err);
+        }
+
+        // Verify emergency is still pending hospital acceptance
+        if (!"HOSPITAL_ASSIGNED".equals(request.getStatus())) {
+            Map<String, String> err = new HashMap<>();
+            err.put("error", "Emergency is no longer pending hospital acceptance. Current status: " + request.getStatus());
+            return ResponseEntity.badRequest().body(err);
+        }
+
         try {
-            EmergencyRequest request = emergencyService.acceptEmergency(id);
-            return ResponseEntity.ok(request);
+            EmergencyRequest acceptedRequest = emergencyService.acceptEmergency(id, requester.getHospitalId());
+            return ResponseEntity.ok(enrichEmergency(acceptedRequest));
         } catch (IllegalArgumentException e) {
             Map<String, String> err = new HashMap<>();
             err.put("error", e.getMessage());
@@ -139,8 +200,10 @@ public class EmergencyController {
         }
 
         List<EmergencyRequest> allActive = emergencyRepository.findByStatusIn(List.of(
-                "CREATED", "SEARCHING_HOSPITAL", "HOSPITAL_ASSIGNED", "ACCEPTED",
-                "DOCTOR_ASSIGNED", "AMBULANCE_ASSIGNED", "AMBULANCE_EN_ROUTE", "PATIENT_PICKED_UP"
+                "CREATED", "SEARCHING_HOSPITAL", "DETECTED", "HOSPITAL_ASSIGNED", "ACCEPTED",
+                "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
+                "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
+                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL"
         ));
 
         // Filter based on role
@@ -174,7 +237,7 @@ public class EmergencyController {
                     .filter(e -> e.getAmbulanceId() != null)
                     .filter(e -> {
                         Optional<Ambulance> ambOpt = ambulanceRepository.findById(e.getAmbulanceId());
-                        return ambOpt.isPresent() && ambOpt.get().getDriver() != null 
+                        return ambOpt.isPresent() && ambOpt.get().getDriver() != null
                                 && ambOpt.get().getDriver().getId().equals(requester.getId());
                     })
                     .toList();
@@ -182,7 +245,65 @@ public class EmergencyController {
             filtered = List.of();
         }
 
-        return ResponseEntity.ok(filtered);
+        return ResponseEntity.ok(filtered.stream().map(this::enrichEmergency).toList());
+    }
+
+    @GetMapping("/{id}/timeline")
+    public ResponseEntity<?> getTimeline(@PathVariable Long id) {
+        String requesterUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User requester = userRepository.findByUid(requesterUid).orElse(null);
+
+        if (requester == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        EmergencyRequest request = emergencyRepository.findById(id).orElse(null);
+        if (request == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // Authorization check (same as getEmergencyRequest)
+        boolean isAuthorized = checkAuthorization(requester, request);
+        if (!isAuthorized) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Access denied"));
+        }
+
+        // Return timeline events - we need to query EmergencyEventRepository
+        // For now, return empty list as placeholder
+        return ResponseEntity.ok(List.of());
+    }
+
+    @GetMapping("/{id}/hospital")
+    public ResponseEntity<?> getAssignedHospital(@PathVariable Long id) {
+        EmergencyRequest request = emergencyRepository.findById(id).orElse(null);
+        if (request == null || request.getHospitalId() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return hospitalRepository.findById(request.getHospitalId())
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{id}/doctor")
+    public ResponseEntity<?> getAssignedDoctor(@PathVariable Long id) {
+        EmergencyRequest request = emergencyRepository.findById(id).orElse(null);
+        if (request == null || request.getDoctorId() == null || request.getDoctorId() <= 0) {
+            return ResponseEntity.notFound().build();
+        }
+        return doctorRepository.findById(request.getDoctorId())
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
+    }
+
+    @GetMapping("/{id}/ambulance")
+    public ResponseEntity<?> getAssignedAmbulance(@PathVariable Long id) {
+        EmergencyRequest request = emergencyRepository.findById(id).orElse(null);
+        if (request == null || request.getAmbulanceId() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ambulanceRepository.findById(request.getAmbulanceId())
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.notFound().build());
     }
 
     @PostMapping("/{id}/resolve")
@@ -205,7 +326,7 @@ public class EmergencyController {
 
         if ("DOCTOR".equals(role) && request.getDoctorId() != null && request.getDoctorId().equals(requester.getId())) {
             isAuthorized = true;
-        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null 
+        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null
                 && requester.getHospitalId().equals(request.getHospitalId())) {
             isAuthorized = true;
         } else if ("SYSTEM_ADMIN".equals(role)) {
@@ -216,7 +337,7 @@ public class EmergencyController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Unauthorized to resolve this emergency"));
         }
 
-        request.setStatus("COMPLETED");
+        request.setStatus("RESOLVED");
         request.setCompletedAt(java.time.LocalDateTime.now());
         emergencyRepository.save(request);
 
@@ -228,10 +349,187 @@ public class EmergencyController {
             hospitalRepository.save(hospital);
         }
 
+        // Release doctor
+        if (request.getDoctorId() != null && request.getDoctorId() > 0) {
+            doctorRepository.findById(request.getDoctorId()).ifPresent(doc -> {
+                doc.setAvailableForEmergency(true);
+                doctorRepository.save(doc);
+            });
+        }
+
+        // Release ambulance
+        if (request.getAmbulanceId() != null) {
+            ambulanceRepository.findById(request.getAmbulanceId()).ifPresent(amb -> {
+                amb.setStatus("AVAILABLE");
+                amb.setCurrentEmergencyId(null);
+                ambulanceRepository.save(amb);
+            });
+        }
+
         Map<String, Object> res = new HashMap<>();
         res.put("success", true);
         res.put("sos_id", id);
         res.put("status", "resolved");
         return ResponseEntity.ok(res);
+    }
+
+    @PostMapping("/{id}/cancel")
+    public ResponseEntity<?> cancelCase(@PathVariable Long id) {
+        String requesterUid = SecurityContextHolder.getContext().getAuthentication().getName();
+        User requester = userRepository.findByUid(requesterUid).orElse(null);
+
+        if (requester == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        }
+
+        EmergencyRequest request = emergencyRepository.findById(id).orElse(null);
+        if (request == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        // Authorization: Patient can cancel their own, hospital admin for their hospital, system admin
+        boolean isAuthorized = false;
+        String role = requester.getRole();
+
+        if ("PATIENT".equals(role) && requesterUid.equals(request.getPatientUid())) {
+            isAuthorized = true;
+        } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null
+                && requester.getHospitalId().equals(request.getHospitalId())) {
+            isAuthorized = true;
+        } else if ("SYSTEM_ADMIN".equals(role)) {
+            isAuthorized = true;
+        }
+
+        if (!isAuthorized) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Unauthorized to cancel this emergency"));
+        }
+
+        request.setStatus("CANCELLED");
+        request.setCancelled(true);
+        request.setCompletedAt(java.time.LocalDateTime.now());
+        emergencyRepository.save(request);
+
+        // Release resources
+        if (request.getDoctorId() != null && request.getDoctorId() > 0) {
+            doctorRepository.findById(request.getDoctorId()).ifPresent(doc -> {
+                doc.setAvailableForEmergency(true);
+                doctorRepository.save(doc);
+            });
+        }
+
+        if (request.getAmbulanceId() != null) {
+            ambulanceRepository.findById(request.getAmbulanceId()).ifPresent(amb -> {
+                amb.setStatus("AVAILABLE");
+                amb.setCurrentEmergencyId(null);
+                ambulanceRepository.save(amb);
+            });
+        }
+
+        if (request.getHospitalId() != null) {
+            hospitalRepository.findById(request.getHospitalId()).ifPresent(h -> {
+                h.setAvailableBeds(Math.min(h.getTotalBeds(), h.getAvailableBeds() + 1));
+                h.setAvailableDoctors(Math.min(h.getTotalDoctors(), h.getAvailableDoctors() + 1));
+                hospitalRepository.save(h);
+            });
+        }
+
+        Map<String, Object> res = new HashMap<>();
+        res.put("success", true);
+        res.put("sos_id", id);
+        res.put("status", "cancelled");
+        return ResponseEntity.ok(res);
+    }
+
+    private Map<String, Object> enrichEmergency(EmergencyRequest request) {
+        Map<String, Object> enriched = new HashMap<>();
+
+        // Basic fields
+        enriched.put("id", request.getId());
+        enriched.put("patientUid", request.getPatientUid());
+        enriched.put("latitude", request.getLatitude());
+        enriched.put("longitude", request.getLongitude());
+        enriched.put("symptoms", request.getSymptoms());
+        enriched.put("symptomDescription", request.getSymptomDescription());
+        enriched.put("requiredDepartment", request.getRequiredDepartment());
+        enriched.put("hospitalId", request.getHospitalId());
+        enriched.put("doctorId", request.getDoctorId());
+        enriched.put("ambulanceId", request.getAmbulanceId());
+        enriched.put("status", request.getStatus());
+        enriched.put("createdAt", request.getCreatedAt());
+        enriched.put("acceptedAt", request.getAcceptedAt());
+        enriched.put("assignedAt", request.getAssignedAt());
+        enriched.put("completedAt", request.getCompletedAt());
+        enriched.put("cancelled", request.getCancelled());
+        enriched.put("smsSent", request.getSmsSent());
+        enriched.put("ambulanceDispatched", request.getAmbulanceDispatched());
+        enriched.put("requiresAmbulance", request.getRequiresAmbulance());
+        enriched.put("riskScore", request.getRiskScore());
+        enriched.put("severity", request.getSeverity());
+        enriched.put("detectedVitals", request.getDetectedVitals());
+
+        // Enrich with hospital name
+        if (request.getHospitalId() != null) {
+            hospitalRepository.findById(request.getHospitalId()).ifPresent(h -> {
+                enriched.put("hospitalName", h.getName());
+                enriched.put("hospitalLat", h.getLat());
+                enriched.put("hospitalLng", h.getLng());
+            });
+        }
+
+        // Enrich with doctor name
+        if (request.getDoctorId() != null && request.getDoctorId() > 0) {
+            doctorRepository.findById(request.getDoctorId()).ifPresent(d -> {
+                enriched.put("doctorName", d.getName());
+                enriched.put("doctorSpecialization", d.getSpecialization());
+                enriched.put("doctorPhone", d.getPhone());
+            });
+        } else if (request.getDoctorId() != null && request.getDoctorId() == -1L) {
+            enriched.put("doctorName", "Emergency Team");
+        }
+
+        // Enrich with ambulance info
+        if (request.getAmbulanceId() != null) {
+            ambulanceRepository.findById(request.getAmbulanceId()).ifPresent(a -> {
+                enriched.put("ambulanceUnitId", a.getUnitId());
+                enriched.put("ambulanceStatus", a.getStatus());
+                enriched.put("ambulanceLatitude", a.getLatitude());
+                enriched.put("ambulanceLongitude", a.getLongitude());
+                if (a.getDriver() != null) {
+                    enriched.put("driverName", a.getDriver().getFullName());
+                }
+            });
+        }
+
+        // Enrich with patient info
+        userRepository.findByUid(request.getPatientUid()).ifPresent(p -> {
+            enriched.put("patientName", p.getFullName());
+            enriched.put("patientAge", p.getAge());
+            enriched.put("patientBloodGroup", p.getBloodGroup());
+            enriched.put("patientPhone", p.getDoctorPhone());
+            enriched.put("patientAddress", p.getAddress());
+        });
+
+        return enriched;
+    }
+
+    private boolean checkAuthorization(User requester, EmergencyRequest request) {
+        String role = requester.getRole();
+        String requesterUid = requester.getUid();
+
+        if (requesterUid.equals(request.getPatientUid())) {
+            return true;
+        } else if ("FAMILY_MEMBER".equals(role)) {
+            return false; // Require explicit check
+        } else if ("DOCTOR".equals(role)) {
+            return request.getDoctorId() != null && request.getDoctorId() > 0 && request.getDoctorId().equals(requester.getId());
+        } else if ("HOSPITAL_ADMIN".equals(role)) {
+            return requester.getHospitalId() != null && requester.getHospitalId().equals(request.getHospitalId());
+        } else if ("AMBULANCE_DRIVER".equals(role)) {
+            return request.getAmbulanceId() != null && requester.getAmbulanceId() != null
+                    && requester.getAmbulanceId().equals(request.getAmbulanceId());
+        } else if ("SYSTEM_ADMIN".equals(role)) {
+            return true;
+        }
+        return false;
     }
 }

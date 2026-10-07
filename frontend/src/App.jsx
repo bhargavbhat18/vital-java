@@ -5,6 +5,7 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import UserDashboard from './pages/UserDashboard';
 import HealthcareDashboard from './pages/HealthcareDashboard';
+import Profile from './pages/Profile';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { token, user, loading } = useAuth();
@@ -79,6 +80,15 @@ function App() {
           element={
             <ProtectedRoute allowedRoles={['PATIENT', 'FAMILY_MEMBER']}>
               <UserDashboard />
+            </ProtectedRoute>
+          } 
+        />
+        
+        <Route 
+          path="/profile" 
+          element={
+            <ProtectedRoute allowedRoles={['PATIENT', 'FAMILY_MEMBER']}>
+              <Profile />
             </ProtectedRoute>
           } 
         />

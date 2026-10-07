@@ -2,10 +2,12 @@ package com.vitaguard.backend_java.ambulance;
 
 import com.vitaguard.backend_java.emergency.EmergencyRequest;
 import com.vitaguard.backend_java.emergency.EmergencyRequestRepository;
+import com.vitaguard.backend_java.emergency.EmergencyWorkflowService;
 import com.vitaguard.backend_java.hospital.Hospital;
 import com.vitaguard.backend_java.hospital.HospitalRepository;
 import com.vitaguard.backend_java.user.User;
 import com.vitaguard.backend_java.user.UserRepository;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,7 +19,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.Collectors;
 
 @Service
 public class AmbulanceService {
@@ -28,6 +29,7 @@ public class AmbulanceService {
     private final HospitalRepository hospitalRepository;
     private final UserRepository userRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final EmergencyWorkflowService emergencyWorkflowService;
 
     // Track pending requests to prevent duplicate acceptance
     private final Map<Long, Long> pendingRequestLocks = new ConcurrentHashMap<>();
@@ -37,19 +39,30 @@ public class AmbulanceService {
                             EmergencyRequestRepository emergencyRepository,
                             HospitalRepository hospitalRepository,
                             UserRepository userRepository,
-                            SimpMessagingTemplate messagingTemplate) {
+                            SimpMessagingTemplate messagingTemplate,
+                            @Lazy EmergencyWorkflowService emergencyWorkflowService) {
         this.ambulanceRepository = ambulanceRepository;
         this.requestRepository = requestRepository;
         this.emergencyRepository = emergencyRepository;
         this.hospitalRepository = hospitalRepository;
         this.userRepository = userRepository;
         this.messagingTemplate = messagingTemplate;
+        this.emergencyWorkflowService = emergencyWorkflowService;
     }
 
     @Transactional
     public AmbulanceRequest requestNearestAmbulance(EmergencyRequest emergency) {
+        // Only request ambulance if required
+        if (!Boolean.TRUE.equals(emergency.getRequiresAmbulance())) {
+            return null;
+        }
+
         List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE");
         if (availableAmbulances.isEmpty()) {
+            // No ambulances available
+            emergency.setStatus("AMBULANCE_UNAVAILABLE");
+            emergencyRepository.save(emergency);
+            notifyAmbulanceUnavailable(emergency);
             return null;
         }
 
@@ -120,8 +133,15 @@ public class AmbulanceService {
         payload.put("pickupLng", emergency.getLongitude());
         payload.put("destinationHospital", getHospitalName(emergency.getHospitalId()));
         payload.put("status", "PENDING");
+        payload.put("requestedAt", LocalDateTime.now());
 
-        messagingTemplate.convertAndSend("/topic/ambulance/request/" + driver.getId(), (Object) payload);
+        Object wsPayload = payload;
+
+        // Send to driver's personal topic
+        messagingTemplate.convertAndSend("/topic/ambulance/request/" + driver.getId(), wsPayload);
+        
+        // Also send to ambulance topic
+        messagingTemplate.convertAndSend("/topic/ambulance/" + request.getAmbulanceId(), wsPayload);
     }
 
     @Transactional
@@ -167,9 +187,11 @@ public class AmbulanceService {
         EmergencyRequest emergency = emergencyRepository.findById(request.getEmergencyId()).orElse(null);
         if (emergency != null) {
             emergency.setAmbulanceId(ambulance.getId());
-            emergency.setStatus("AMBULANCE_ACCEPTED");
             emergency.setAmbulanceDispatched(true);
             emergencyRepository.save(emergency);
+            
+            // Call workflow service to handle status update
+            emergencyWorkflowService.onAmbulanceAccepted(emergency, ambulance.getId());
         }
 
         // Notify all parties
@@ -217,6 +239,7 @@ public class AmbulanceService {
         if (availableAmbulances.isEmpty()) {
             emergency.setStatus("AMBULANCE_UNAVAILABLE");
             emergencyRepository.save(emergency);
+            notifyAmbulanceUnavailable(emergency);
             return;
         }
 
@@ -256,15 +279,36 @@ public class AmbulanceService {
         payload.put("distanceKm", request.getDistanceKm());
         payload.put("etaMinutes", request.getEtaMinutes());
 
+        Object wsPayload = payload;
+
         // Broadcast to patient, family, hospital, doctor
-        messagingTemplate.convertAndSend("/topic/emergency/" + emergency.getId(), (Object) payload);
-        messagingTemplate.convertAndSend("/topic/ambulance/" + ambulance.getId(), (Object) payload);
+        messagingTemplate.convertAndSend("/topic/emergency/" + emergency.getId(), wsPayload);
+        messagingTemplate.convertAndSend("/topic/ambulance/" + ambulance.getId(), wsPayload);
         if (emergency.getHospitalId() != null) {
-            messagingTemplate.convertAndSend("/topic/hospital/" + emergency.getHospitalId() + "/incoming", (Object) payload);
+            messagingTemplate.convertAndSend("/topic/hospital/" + emergency.getHospitalId() + "/emergencies", wsPayload);
         }
         if (emergency.getDoctorId() != null && emergency.getDoctorId() > 0) {
-            messagingTemplate.convertAndSend("/topic/doctor/" + emergency.getDoctorId() + "/updates", (Object) payload);
+            messagingTemplate.convertAndSend("/topic/doctor/" + emergency.getDoctorId() + "/emergencies", wsPayload);
         }
+        messagingTemplate.convertAndSend("/topic/family-notifications/" + emergency.getPatientUid(), wsPayload);
+    }
+
+    private void notifyAmbulanceUnavailable(EmergencyRequest emergency) {
+        Map<String, Object> payload = new java.util.HashMap<>();
+        payload.put("emergencyId", emergency.getId());
+        payload.put("status", "AMBULANCE_UNAVAILABLE");
+        payload.put("message", "No ambulances currently available");
+
+        Object wsPayload = payload;
+
+        messagingTemplate.convertAndSend("/topic/emergency/" + emergency.getId(), wsPayload);
+        if (emergency.getHospitalId() != null) {
+            messagingTemplate.convertAndSend("/topic/hospital/" + emergency.getHospitalId() + "/emergencies", wsPayload);
+        }
+        if (emergency.getDoctorId() != null && emergency.getDoctorId() > 0) {
+            messagingTemplate.convertAndSend("/topic/doctor/" + emergency.getDoctorId() + "/emergencies", wsPayload);
+        }
+        messagingTemplate.convertAndSend("/topic/family-notifications/" + emergency.getPatientUid(), wsPayload);
     }
 
     @Transactional
@@ -286,10 +330,46 @@ public class AmbulanceService {
         payload.put("longitude", ambulance.getLongitude());
         payload.put("timestamp", LocalDateTime.now().toString());
 
-        messagingTemplate.convertAndSend("/topic/ambulance/" + ambulanceId, (Object) payload);
+        Object wsPayload = payload;
+
+        messagingTemplate.convertAndSend("/topic/ambulance/" + ambulanceId, wsPayload);
 
         if (ambulance.getCurrentEmergencyId() != null) {
-            messagingTemplate.convertAndSend("/topic/emergency/" + ambulance.getCurrentEmergencyId(), (Object) payload);
+            EmergencyRequest emergency = emergencyRepository.findById(ambulance.getCurrentEmergencyId()).orElse(null);
+            if (emergency != null) {
+                // Update emergency status based on ambulance status
+                switch (status) {
+                    case "EN_ROUTE_TO_PATIENT":
+                        emergencyWorkflowService.onAmbulanceEnRoute(emergency);
+                        break;
+                    case "ARRIVED_AT_PATIENT":
+                        // Keep current status or update if needed
+                        break;
+                    case "PATIENT_PICKED_UP":
+                        emergencyWorkflowService.onPatientPickedUp(emergency);
+                        break;
+                    case "EN_ROUTE_TO_HOSPITAL":
+                        // En route to hospital
+                        break;
+                    case "ARRIVED_AT_HOSPITAL":
+                        emergencyWorkflowService.onArrivedAtHospital(emergency);
+                        break;
+                    case "COMPLETED":
+                        // Emergency resolved
+                        break;
+                }
+
+                messagingTemplate.convertAndSend("/topic/emergency/" + ambulance.getCurrentEmergencyId(), wsPayload);
+                
+                // Also broadcast to hospital, doctor, and family topics
+                if (emergency.getHospitalId() != null) {
+                    messagingTemplate.convertAndSend("/topic/hospital/" + emergency.getHospitalId() + "/emergencies", wsPayload);
+                }
+                if (emergency.getDoctorId() != null && emergency.getDoctorId() > 0) {
+                    messagingTemplate.convertAndSend("/topic/doctor/" + emergency.getDoctorId() + "/emergencies", wsPayload);
+                }
+                messagingTemplate.convertAndSend("/topic/family-notifications/" + emergency.getPatientUid(), wsPayload);
+            }
         }
     }
 
