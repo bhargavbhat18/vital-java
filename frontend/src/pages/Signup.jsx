@@ -23,10 +23,10 @@ const Signup = () => {
   const [loading, setLoading] = useState(false);
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
+    const { name, value, type } = e.target;
     setFormData((prev) => ({
       ...prev,
-      [name]: name === 'age' ? parseInt(value) || '' : value
+      [name]: type === 'number' ? (value === '' ? '' : parseFloat(value)) : value
     }));
   };
 
@@ -39,12 +39,8 @@ const Signup = () => {
             latitude: position.coords.latitude,
             longitude: position.coords.longitude
           }));
-          alert('Location loaded successfully.');
         },
-        (error) => {
-          console.error(error);
-          alert('Could not fetch location. Using default coordinates.');
-        }
+        () => alert('Could not fetch location. Using default coordinates.')
       );
     } else {
       alert('Geolocation is not supported by your browser.');
@@ -57,207 +53,357 @@ const Signup = () => {
     setLoading(true);
 
     try {
-      const userData = await register(formData);
+      const submitData = { ...formData };
+      if (submitData.age === '') delete submitData.age;
+      if (submitData.latitude === '') delete submitData.latitude;
+      if (submitData.longitude === '') delete submitData.longitude;
+      
+      const userData = await register(submitData);
       if (userData.role === 'PATIENT' || userData.role === 'FAMILY_MEMBER') {
         navigate('/user-dashboard');
       } else {
         navigate('/healthcare-dashboard');
       }
     } catch (err) {
-      console.error(err);
       setError(err.response?.data?.error || 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
     }
   };
 
+  const roleOptions = [
+    { value: 'PATIENT', label: 'Patient' },
+    { value: 'FAMILY_MEMBER', label: 'Family Member' },
+  ];
+
+  const bloodGroups = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+
   return (
-    <div className="auth-container" style={{ minHeight: '100vh', display: 'flex', justifyContent: 'center', alignItems: 'center', background: 'var(--bg-primary-gradient)', padding: '40px 20px' }}>
-      <div className="saas-card" style={{ width: '100%', maxWidth: '640px', padding: '40px', background: '#ffffff', borderRadius: '24px', boxShadow: '0 20px 40px -10px rgba(103, 110, 144, 0.08)' }}>
-        <div style={{ textAlign: 'center', marginBottom: '32px' }}>
-          <div style={{ fontSize: '42px', marginBottom: '12px' }}>🛡️</div>
-          <h2 style={{ fontSize: '24px', fontWeight: 800, color: 'var(--text-primary)', letterSpacing: '-0.5px' }}>Create Account</h2>
-          <p style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.8px', marginTop: '6px' }}>
-            Join VitalGuard Health Network
-          </p>
-        </div>
-
-        {error && (
-          <div style={{ padding: '12px', background: '#fff1f0', border: '1px solid #ffa39e', color: 'var(--accent-red)', borderRadius: '10px', fontSize: '12px', marginBottom: '20px', textAlign: 'center', fontWeight: 600 }}>
-            {error}
+    <div style={{ 
+      minHeight: '100vh', 
+      display: 'flex', 
+      justifyContent: 'center', 
+      alignItems: 'center', 
+      background: 'var(--color-gray-50)',
+      padding: 'var(--space-6)',
+    }}>
+      <div style={{ 
+        width: '100%', 
+        maxWidth: '720px',
+      }}>
+        {/* Signup Card */}
+        <div className="card" style={{ 
+          padding: 'var(--space-8)', 
+          boxShadow: 'var(--shadow-xl)',
+        }}>
+          {/* Header */}
+          <div style={{ textAlign: 'center', marginBottom: 'var(--space-8)' }}>
+            <div className="avatar avatar-xl" style={{ 
+              margin: '0 auto var(--space-4)',
+              background: 'linear-gradient(135deg, var(--color-primary), var(--color-primary-light))',
+            }}>
+              🛡️
+            </div>
+            <h1 style={{ 
+              fontSize: 'var(--font-size-3xl)', 
+              fontWeight: 'var(--font-weight-extrabold)',
+              color: 'var(--color-gray-900)',
+              marginBottom: 'var(--space-2)',
+            }}>
+              Create Account
+            </h1>
+            <p style={{ 
+              fontSize: 'var(--font-size-xs)', 
+              fontWeight: 'var(--font-weight-semibold)',
+              color: 'var(--color-primary)',
+              textTransform: 'uppercase',
+              letterSpacing: '0.08em',
+              marginBottom: 'var(--space-2)',
+            }}>
+              VitalGuard Health Network
+            </p>
+            <p style={{ 
+              fontSize: 'var(--font-size-base)', 
+              color: 'var(--color-gray-500)',
+            }}>
+              Join the health command & telemetry network
+            </p>
           </div>
-        )}
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }} className="saas-grid-layout">
-            <div className="form-group">
-              <label htmlFor="email">Email Address</label>
-              <input
-                type="email"
-                id="email"
-                name="email"
-                placeholder="name@email.com"
-                value={formData.email}
-                onChange={handleChange}
-                required
-              />
+          {/* Error */}
+          {error && (
+            <div className="alert alert-critical" style={{ marginBottom: 'var(--space-5)' }}>
+              <span style={{ fontSize: '18px' }}>🚨</span>
+              <div>
+                <div className="alert-title">Registration Failed</div>
+                <div className="alert-message">{error}</div>
+              </div>
             </div>
+          )}
 
+          {/* Form */}
+          <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-5)' }}>
+            {/* Account Type */}
             <div className="form-group">
-              <label htmlFor="password">Password</label>
-              <input
-                type="password"
-                id="password"
-                name="password"
-                placeholder="••••••••"
-                value={formData.password}
-                onChange={handleChange}
-                required
-              />
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="role">Account Type (Role)</label>
-              <select id="role" name="role" value={formData.role} onChange={handleChange} style={{ height: '43px' }}>
-                <option value="PATIENT">Patient</option>
-                <option value="FAMILY_MEMBER">Family Member</option>
-              </select>
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="fullName">Full Name</label>
-              <input
-                type="text"
-                id="fullName"
-                name="fullName"
-                placeholder="e.g. Rahul Sharma"
-                value={formData.fullName}
-                onChange={handleChange}
-                required
-              />
-            </div>
-
-            {formData.role === 'PATIENT' && (
-              <>
-                <div className="form-group">
-                  <label htmlFor="age">Age</label>
-                  <input
-                    type="number"
-                    id="age"
-                    name="age"
-                    placeholder="45"
-                    value={formData.age}
-                    onChange={handleChange}
-                    required
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="bloodGroup">Blood Group</label>
-                  <select
-                    id="bloodGroup"
-                    name="bloodGroup"
-                    value={formData.bloodGroup}
-                    onChange={handleChange}
-                    required
-                    style={{ height: '43px' }}
+              <label className="form-label">Account Type</label>
+              <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+                {roleOptions.map((role) => (
+                  <label 
+                    key={role.value}
+                    style={{ 
+                      flex: 1,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 'var(--space-2)',
+                      padding: 'var(--space-4)',
+                      border: `2px solid ${formData.role === role.value ? 'var(--color-primary)' : 'var(--color-gray-300)'}`,
+                      borderRadius: 'var(--radius-xl)',
+                      background: formData.role === role.value ? 'var(--color-primary-bg)' : 'var(--color-white)',
+                      cursor: 'pointer',
+                      transition: 'all var(--transition-fast)',
+                    }}
                   >
-                    <option value="">Select Blood Group</option>
-                    <option value="A+">A+</option>
-                    <option value="A-">A-</option>
-                    <option value="B+">B+</option>
-                    <option value="B-">B-</option>
-                    <option value="O+">O+</option>
-                    <option value="O-">O-</option>
-                    <option value="AB+">AB+</option>
-                    <option value="AB-">AB-</option>
-                  </select>
-                </div>
-              </>
-            )}
-
-            <div className="form-group" style={{ gridColumn: 'span 2' }}>
-              <label htmlFor="address">Address</label>
-              <input
-                type="text"
-                id="address"
-                name="address"
-                placeholder="Street address, City"
-                value={formData.address}
-                onChange={handleChange}
-                required
-              />
-            </div>
-
-            <div className="form-group" style={{ gridColumn: 'span 2' }}>
-              <label>Geographic Coordinates</label>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                <input
-                  type="number"
-                  step="any"
-                  name="latitude"
-                  placeholder="Latitude"
-                  value={formData.latitude}
-                  onChange={(e) => setFormData(p => ({ ...p, latitude: parseFloat(e.target.value) || 0 }))}
-                  required
-                  style={{ flex: 1 }}
-                />
-                <input
-                  type="number"
-                  step="any"
-                  name="longitude"
-                  placeholder="Longitude"
-                  value={formData.longitude}
-                  onChange={(e) => setFormData(p => ({ ...p, longitude: parseFloat(e.target.value) || 0 }))}
-                  required
-                  style={{ flex: 1 }}
-                />
-                <button type="button" onClick={handleGeoLocation} style={{ padding: '0 16px', borderRadius: '12px', border: '1px solid var(--border-color)', background: '#fff', fontSize: '12px', fontWeight: 600, cursor: 'pointer' }}>
-                  📍 Detect
-                </button>
+                    <input
+                      type="radio"
+                      name="role"
+                      value={role.value}
+                      checked={formData.role === role.value}
+                      onChange={handleChange}
+                      style={{ display: 'none' }}
+                    />
+                    <span style={{ fontSize: 'var(--font-size-lg)', fontWeight: 'var(--font-weight-bold)', color: formData.role === role.value ? 'var(--color-primary)' : 'var(--color-gray-900)' }}>
+                      {role.label}
+                    </span>
+                    <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-gray-500)' }}>
+                      {role.value === 'PATIENT' ? 'Full access to vitals & emergency' : 'Monitor loved ones'}
+                    </span>
+                  </label>
+                ))}
               </div>
             </div>
 
+            {/* Personal Information */}
+            <div style={{ borderTop: '1px solid var(--color-gray-200)', paddingTop: 'var(--space-5)' }}>
+              <h3 style={{ 
+                fontSize: 'var(--font-size-lg)', 
+                fontWeight: 'var(--font-weight-bold)',
+                color: 'var(--color-gray-900)',
+                marginBottom: 'var(--space-4)',
+              }}>
+                Personal Information
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 'var(--space-4)' }}>
+                <div className="form-group">
+                  <label className="form-label" htmlFor="fullName">Full Name</label>
+                  <input
+                    type="text"
+                    id="fullName"
+                    name="fullName"
+                    className="form-input"
+                    placeholder="e.g. Rahul Sharma"
+                    value={formData.fullName}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="email">Email Address</label>
+                  <input
+                    type="email"
+                    id="email"
+                    name="email"
+                    className="form-input"
+                    placeholder="name@email.com"
+                    value={formData.email}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" htmlFor="password">Password</label>
+                  <input
+                    type="password"
+                    id="password"
+                    name="password"
+                    className="form-input"
+                    placeholder="•••••••• (min 8 characters)"
+                    value={formData.password}
+                    onChange={handleChange}
+                    required
+                    minLength={8}
+                  />
+                </div>
+
+                {formData.role === 'PATIENT' && (
+                  <>
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="age">Age</label>
+                      <input
+                        type="number"
+                        id="age"
+                        name="age"
+                        className="form-input"
+                        placeholder="45"
+                        value={formData.age}
+                        onChange={handleChange}
+                        min="1"
+                        max="120"
+                      />
+                    </div>
+
+                    <div className="form-group">
+                      <label className="form-label" htmlFor="bloodGroup">Blood Group</label>
+                      <select
+                        id="bloodGroup"
+                        name="bloodGroup"
+                        className="form-select"
+                        value={formData.bloodGroup}
+                        onChange={handleChange}
+                      >
+                        <option value="">Select Blood Group</option>
+                        {['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'].map(bg => (
+                          <option key={bg} value={bg}>{bg}</option>
+                        ))}
+                      </select>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* Contact Information */}
+            <div style={{ borderTop: '1px solid var(--color-gray-200)', paddingTop: 'var(--space-5)' }}>
+              <h3 style={{ 
+                fontSize: 'var(--font-size-lg)', 
+                fontWeight: 'var(--font-weight-bold)',
+                color: 'var(--color-gray-900)',
+                marginBottom: 'var(--space-4)',
+              }}>
+                Contact Information
+              </h3>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 'var(--space-4)' }}>
+                <div className="form-group" style={{ gridColumn: '1 / -1' }}>
+                  <label className="form-label" htmlFor="address">Address</label>
+                  <input
+                    type="text"
+                    id="address"
+                    name="address"
+                    className="form-input"
+                    placeholder="Street address, City, State"
+                    value={formData.address}
+                    onChange={handleChange}
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Geographic Coordinates</label>
+                  <div style={{ display: 'flex', gap: 'var(--space-3)' }}>
+                    <input
+                      type="number"
+                      step="any"
+                      name="latitude"
+                      className="form-input"
+                      placeholder="Latitude"
+                      value={formData.latitude}
+                      onChange={handleChange}
+                      required
+                      style={{ flex: 1 }}
+                    />
+                    <input
+                      type="number"
+                      step="any"
+                      name="longitude"
+                      className="form-input"
+                      placeholder="Longitude"
+                      value={formData.longitude}
+                      onChange={handleChange}
+                      required
+                      style={{ flex: 1 }}
+                    />
+                    <button 
+                      type="button" 
+                      onClick={handleGeoLocation}
+                      className="btn btn-secondary"
+                      style={{ alignSelf: 'flex-end', height: '43px', padding: '0 var(--space-4)' }}
+                    >
+                      📍 Detect
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Emergency Contact (Patient only) */}
             {formData.role === 'PATIENT' && (
-              <div style={{ gridColumn: 'span 2', borderTop: '1px solid var(--border-color)', paddingTop: '16px', marginTop: '8px' }}>
-                <h3 style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text-secondary)', marginBottom: '12px' }}>Primary Doctor Referral (Optional)</h3>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '8px' }}>
-                  <input
-                    type="text"
-                    name="doctorName"
-                    placeholder="Doctor Name"
-                    value={formData.doctorName}
-                    onChange={handleChange}
-                    style={{ padding: '10px', fontSize: '12px', borderRadius: '10px', border: '1px solid var(--border-color)', outline: 'none' }}
-                  />
-                  <input
-                    type="text"
-                    name="doctorPhone"
-                    placeholder="Doctor Phone"
-                    value={formData.doctorPhone}
-                    onChange={handleChange}
-                    style={{ padding: '10px', fontSize: '12px', borderRadius: '10px', border: '1px solid var(--border-color)', outline: 'none' }}
-                  />
-                  <input
-                    type="text"
-                    name="doctorHospital"
-                    placeholder="Associated Hospital"
-                    value={formData.doctorHospital}
-                    onChange={handleChange}
-                    style={{ padding: '10px', fontSize: '12px', borderRadius: '10px', border: '1px solid var(--border-color)', outline: 'none' }}
-                  />
+              <div style={{ borderTop: '1px solid var(--color-gray-200)', paddingTop: 'var(--space-5)' }}>
+                <h3 style={{ 
+                  fontSize: 'var(--font-size-lg)', 
+                  fontWeight: 'var(--font-weight-bold)',
+                  color: 'var(--color-gray-900)',
+                  marginBottom: 'var(--space-4)',
+                }}>
+                  Primary Doctor Referral (Optional)
+                </h3>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 'var(--space-4)' }}>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="doctorName">Doctor Name</label>
+                    <input
+                      type="text"
+                      id="doctorName"
+                      name="doctorName"
+                      className="form-input"
+                      placeholder="e.g. Dr. Anirudh Kulkarni"
+                      value={formData.doctorName}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="doctorPhone">Doctor Phone</label>
+                    <input
+                      type="tel"
+                      id="doctorPhone"
+                      name="doctorPhone"
+                      className="form-input"
+                      placeholder="e.g. +91 9880123456"
+                      value={formData.doctorPhone}
+                      onChange={handleChange}
+                    />
+                  </div>
+                  <div className="form-group">
+                    <label className="form-label" htmlFor="doctorHospital">Associated Hospital</label>
+                    <input
+                      type="text"
+                      id="doctorHospital"
+                      name="doctorHospital"
+                      className="form-input"
+                      placeholder="e.g. Apollo Hospital"
+                      value={formData.doctorHospital}
+                      onChange={handleChange}
+                    />
+                  </div>
                 </div>
               </div>
             )}
+
+            {/* Submit */}
+            <button 
+              type="submit" 
+              className="btn btn-primary btn-lg w-full"
+              disabled={loading}
+              style={{ padding: 'var(--space-3)', fontSize: 'var(--font-size-base)', marginTop: 'var(--space-2)' }}
+            >
+              {loading ? 'Creating Account...' : 'Create Account'}
+            </button>
+          </form>
+
+          {/* Footer */}
+          <div style={{ textAlign: 'center', marginTop: 'var(--space-6)', fontSize: 'var(--font-size-sm)', color: 'var(--color-gray-500)' }}>
+            Already have an account? <Link to="/login" style={{ color: 'var(--color-primary)', fontWeight: 'var(--font-weight-semibold)', textDecoration: 'none' }}>Sign In</Link>
           </div>
-
-          <button type="submit" className="btn-primary" style={{ width: '100%', padding: '14px', fontSize: '14px', borderRadius: '12px', marginTop: '10px' }} disabled={loading}>
-            {loading ? 'Creating Account...' : 'Create Account'}
-          </button>
-        </form>
-
-        <div style={{ textAlign: 'center', marginTop: '24px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-          Already have an account? <Link to="/login" style={{ color: 'var(--accent)', fontWeight: 700, textDecoration: 'none' }}>Sign in</Link>
         </div>
       </div>
     </div>

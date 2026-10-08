@@ -1,5 +1,6 @@
 package com.vitaguard.backend_java.security;
 
+import com.vitaguard.backend_java.user.User;
 import com.vitaguard.backend_java.user.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -34,6 +35,11 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             @NonNull HttpServletResponse response,
             @NonNull FilterChain filterChain
     ) throws ServletException, IOException {
+        if ("OPTIONS".equalsIgnoreCase(request.getMethod())) {
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
         final String userUid;
@@ -56,6 +62,29 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             try {
                 UserDetails userDetails = this.userDetailsService.loadUserByUsername(userUid);
                 if (jwtService.isTokenValid(jwt, userDetails)) {
+                    // Load current User from database and verify status is ACTIVE
+                    if (userDetails instanceof User user) {
+                        String status = user.getStatus();
+                        if (!"ACTIVE".equalsIgnoreCase(status)) {
+                            response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                            response.setContentType("application/json");
+                            String message;
+                            if ("DEACTIVATED".equalsIgnoreCase(status)) {
+                                message = "Your account is currently inactive.";
+                            } else if ("SUSPENDED".equalsIgnoreCase(status)) {
+                                message = "Your account has been suspended. Contact system administrator.";
+                            } else if ("PENDING".equalsIgnoreCase(status)) {
+                                message = "Your account is waiting for administrator approval.";
+                            } else if ("REJECTED".equalsIgnoreCase(status)) {
+                                message = "Your account registration was rejected.";
+                            } else {
+                                message = "Account is not active. Access denied.";
+                            }
+                            response.getWriter().write("{\"error\":\"" + message + "\"}");
+                            return;
+                        }
+                    }
+
                     UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(
                             userDetails,
                             null,

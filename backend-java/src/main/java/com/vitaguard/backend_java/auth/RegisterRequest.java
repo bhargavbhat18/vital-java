@@ -11,6 +11,8 @@ public class RegisterRequest {
     private Double latitude;
     private Double longitude;
 
+    private String phone;
+
     // Doctor details (optional, for patient role)
     private String doctorName;
     private String doctorPhone;
@@ -49,6 +51,9 @@ public class RegisterRequest {
 
     public String getDoctorPhone() { return doctorPhone; }
     public void setDoctorPhone(String doctorPhone) { this.doctorPhone = doctorPhone; }
+
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
 
     public String getDoctorHospital() { return doctorHospital; }
     public void setDoctorHospital(String doctorHospital) { this.doctorHospital = doctorHospital; }

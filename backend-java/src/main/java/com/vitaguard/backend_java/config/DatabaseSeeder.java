@@ -53,6 +53,7 @@ public class DatabaseSeeder implements CommandLineRunner {
         User patient = null;
         if (!userRepository.existsByEmail("patient@vitaguard.com")) {
             patient = new User("LKT01", "patient@vitaguard.com", passwordEncoder.encode("password"), "PATIENT");
+            patient.setStatus("ACTIVE");
             patient.setFullName("Rahul Sharma");
             patient.setAge(45);
             patient.setBloodGroup("O+");
@@ -63,12 +64,17 @@ public class DatabaseSeeder implements CommandLineRunner {
             System.out.println("[SEED] Test patient LKT01 seeded successfully.");
         } else {
             patient = userRepository.findByEmail("patient@vitaguard.com").orElse(null);
+            if (patient != null && !"ACTIVE".equals(patient.getStatus())) {
+                patient.setStatus("ACTIVE");
+                userRepository.save(patient);
+            }
         }
 
         // Seed family member
         User familyMember = null;
         if (!userRepository.existsByEmail("family@vitaguard.com")) {
             familyMember = new User("FAM_01", "family@vitaguard.com", passwordEncoder.encode("password"), "FAMILY_MEMBER");
+            familyMember.setStatus("ACTIVE");
             familyMember.setFullName("Priya Sharma");
             familyMember.setAge(40);
             familyMember.setAddress("Bangalore City Center");
@@ -76,51 +82,79 @@ public class DatabaseSeeder implements CommandLineRunner {
             System.out.println("[SEED] Test family member seeded successfully.");
         } else {
             familyMember = userRepository.findByEmail("family@vitaguard.com").orElse(null);
+            if (familyMember != null && !"ACTIVE".equals(familyMember.getStatus())) {
+                familyMember.setStatus("ACTIVE");
+                userRepository.save(familyMember);
+            }
         }
 
         // Seed doctor user
         User doctorUser = null;
         if (!userRepository.existsByEmail("doctor@vitaguard.com")) {
             doctorUser = new User("DOC_01", "doctor@vitaguard.com", passwordEncoder.encode("password"), "DOCTOR");
+            doctorUser.setStatus("ACTIVE");
             doctorUser.setFullName("Dr. Anirudh Kulkarni");
             doctorUser.setAge(40);
+            doctorUser.setPhone("9880123456");
             userRepository.save(doctorUser);
             System.out.println("[SEED] Test doctor user seeded successfully.");
         } else {
             doctorUser = userRepository.findByEmail("doctor@vitaguard.com").orElse(null);
+            if (doctorUser != null && !"ACTIVE".equals(doctorUser.getStatus())) {
+                doctorUser.setStatus("ACTIVE");
+                userRepository.save(doctorUser);
+            }
         }
 
         // Seed hospital admin user - DEMO ACCOUNT
         User hospitalAdmin = null;
         if (!userRepository.existsByEmail("hospital-admin@vitalguard.com")) {
             hospitalAdmin = new User("HSP_01", "hospital-admin@vitalguard.com", passwordEncoder.encode("password"), "HOSPITAL_ADMIN");
+            hospitalAdmin.setStatus("ACTIVE");
             hospitalAdmin.setFullName("Hospital Admin (Apollo)");
+            hospitalAdmin.setPhone("9880112233");
             userRepository.save(hospitalAdmin);
             System.out.println("[SEED] Demo hospital admin seeded successfully.");
         } else {
             hospitalAdmin = userRepository.findByEmail("hospital-admin@vitalguard.com").orElse(null);
+            if (hospitalAdmin != null && !"ACTIVE".equals(hospitalAdmin.getStatus())) {
+                hospitalAdmin.setStatus("ACTIVE");
+                userRepository.save(hospitalAdmin);
+            }
         }
 
         // Seed ambulance driver user - DEMO ACCOUNT
         User driverUser = null;
         if (!userRepository.existsByEmail("ambulance-driver@vitalguard.com")) {
             driverUser = new User("AMB_01", "ambulance-driver@vitalguard.com", passwordEncoder.encode("password"), "AMBULANCE_DRIVER");
+            driverUser.setStatus("ACTIVE");
             driverUser.setFullName("Ambulance Driver (AMB-01)");
+            driverUser.setPhone("9880998877");
             userRepository.save(driverUser);
             System.out.println("[SEED] Demo ambulance driver seeded successfully.");
         } else {
             driverUser = userRepository.findByEmail("ambulance-driver@vitalguard.com").orElse(null);
+            if (driverUser != null && !"ACTIVE".equals(driverUser.getStatus())) {
+                driverUser.setStatus("ACTIVE");
+                userRepository.save(driverUser);
+            }
         }
 
         // Seed system admin user
         User sysAdmin = null;
         if (!userRepository.existsByEmail("sysadmin@vitaguard.com")) {
             sysAdmin = new User("SYS_01", "sysadmin@vitaguard.com", passwordEncoder.encode("password"), "SYSTEM_ADMIN");
+            sysAdmin.setStatus("ACTIVE");
             sysAdmin.setFullName("System Admin");
+            sysAdmin.setPhone("9880001122");
             userRepository.save(sysAdmin);
             System.out.println("[SEED] Test system admin seeded successfully.");
         } else {
             sysAdmin = userRepository.findByEmail("sysadmin@vitaguard.com").orElse(null);
+            if (sysAdmin != null && !"ACTIVE".equals(sysAdmin.getStatus())) {
+                sysAdmin.setStatus("ACTIVE");
+                userRepository.save(sysAdmin);
+            }
         }
 
         // Seed hospitals if empty
@@ -137,6 +171,7 @@ public class DatabaseSeeder implements CommandLineRunner {
             // Link doctor user to doctor profile
             if (doctorUser != null && doc1 != null) {
                 doctorUser.setHospitalId(apollo.getId());
+                doctorUser.setDoctorId(doc1.getId());
                 userRepository.save(doctorUser);
             }
 

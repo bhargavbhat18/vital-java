@@ -59,6 +59,13 @@ public class User implements UserDetails {
     // For AMBULANCE_DRIVER - link to their ambulance
     private Long ambulanceId;
 
+    // Account Status: ACTIVE, PENDING, REJECTED, SUSPENDED, DEACTIVATED
+    @Column(nullable = false)
+    private String status = "ACTIVE";
+
+    private String phone;
+    private Long doctorId;
+
     public User() {}
 
     public User(String uid, String email, String password, String role) {
@@ -66,6 +73,7 @@ public class User implements UserDetails {
         this.email = email;
         this.password = password;
         this.role = role;
+        this.status = "ACTIVE";
     }
 
     // Getters and Setters
@@ -129,6 +137,15 @@ public class User implements UserDetails {
     public Long getAmbulanceId() { return ambulanceId; }
     public void setAmbulanceId(Long ambulanceId) { this.ambulanceId = ambulanceId; }
 
+    public String getStatus() { return status != null ? status : "ACTIVE"; }
+    public void setStatus(String status) { this.status = status; }
+
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
+
+    public Long getDoctorId() { return doctorId; }
+    public void setDoctorId(Long doctorId) { this.doctorId = doctorId; }
+
     // UserDetails implementations
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
@@ -144,11 +161,15 @@ public class User implements UserDetails {
     public boolean isAccountNonExpired() { return true; }
 
     @Override
-    public boolean isAccountNonLocked() { return true; }
+    public boolean isAccountNonLocked() { 
+        return !"SUSPENDED".equalsIgnoreCase(this.status); 
+    }
 
     @Override
     public boolean isCredentialsNonExpired() { return true; }
 
     @Override
-    public boolean isEnabled() { return true; }
+    public boolean isEnabled() { 
+        return "ACTIVE".equalsIgnoreCase(this.status); 
+    }
 }

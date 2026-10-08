@@ -5,7 +5,10 @@ import Login from './pages/Login';
 import Signup from './pages/Signup';
 import UserDashboard from './pages/UserDashboard';
 import HealthcareDashboard from './pages/HealthcareDashboard';
+import FamilyDashboard from './pages/FamilyDashboard';
 import Profile from './pages/Profile';
+import AdminDashboard from './pages/AdminDashboard';
+import SetupPassword from './pages/SetupPassword';
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { token, user, loading } = useAuth();
@@ -26,7 +29,13 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
   }
 
   if (allowedRoles && (!user || !allowedRoles.includes(user.role))) {
-    if (user?.role === 'PATIENT' || user?.role === 'FAMILY_MEMBER') {
+    if (user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN') {
+      return <Navigate to="/admin" replace />;
+    }
+    if (user?.role === 'FAMILY_MEMBER') {
+      return <Navigate to="/family-dashboard" replace />;
+    }
+    if (user?.role === 'PATIENT') {
       return <Navigate to="/user-dashboard" replace />;
     }
     return <Navigate to="/healthcare-dashboard" replace />;
@@ -74,12 +83,48 @@ function App() {
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/setup-password" element={<SetupPassword />} />
         
+        {/* System Administration Portal - Accessible ONLY by SYSTEM_ADMIN and ADMIN */}
+        <Route 
+          path="/admin" 
+          element={
+            <ProtectedRoute allowedRoles={['SYSTEM_ADMIN', 'ADMIN']}>
+              <AdminDashboard />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/admin/system" 
+          element={
+            <ProtectedRoute allowedRoles={['SYSTEM_ADMIN', 'ADMIN']}>
+              <AdminDashboard />
+            </ProtectedRoute>
+          } 
+        />
+        <Route 
+          path="/admin/audit-logs" 
+          element={
+            <ProtectedRoute allowedRoles={['SYSTEM_ADMIN', 'ADMIN']}>
+              <AdminDashboard defaultTab="audit-logs" />
+            </ProtectedRoute>
+          } 
+        />
+
         <Route 
           path="/user-dashboard" 
           element={
-            <ProtectedRoute allowedRoles={['PATIENT', 'FAMILY_MEMBER']}>
+            <ProtectedRoute allowedRoles={['PATIENT', 'FAMILY_MEMBER', 'ADMIN', 'SYSTEM_ADMIN']}>
               <UserDashboard />
+            </ProtectedRoute>
+          } 
+        />
+
+        <Route 
+          path="/family-dashboard" 
+          element={
+            <ProtectedRoute allowedRoles={['FAMILY_MEMBER', 'ADMIN', 'SYSTEM_ADMIN', 'PATIENT']}>
+              <FamilyDashboard />
             </ProtectedRoute>
           } 
         />
@@ -87,7 +132,7 @@ function App() {
         <Route 
           path="/profile" 
           element={
-            <ProtectedRoute allowedRoles={['PATIENT', 'FAMILY_MEMBER']}>
+            <ProtectedRoute allowedRoles={['PATIENT', 'FAMILY_MEMBER', 'DOCTOR', 'HOSPITAL_ADMIN', 'AMBULANCE_DRIVER', 'ADMIN', 'SYSTEM_ADMIN']}>
               <Profile />
             </ProtectedRoute>
           } 
@@ -102,12 +147,16 @@ function App() {
           } 
         />
 
-        {/* Catch-all redirect */}
+        {/* Catch-all redirect based on authenticated role */}
         <Route 
           path="*" 
           element={
             token ? (
-              user?.role === 'PATIENT' || user?.role === 'FAMILY_MEMBER' ? (
+              user?.role === 'SYSTEM_ADMIN' || user?.role === 'ADMIN' ? (
+                <Navigate to="/admin" replace />
+              ) : user?.role === 'FAMILY_MEMBER' ? (
+                <Navigate to="/family-dashboard" replace />
+              ) : user?.role === 'PATIENT' ? (
                 <Navigate to="/user-dashboard" replace />
               ) : (
                 <Navigate to="/healthcare-dashboard" replace />

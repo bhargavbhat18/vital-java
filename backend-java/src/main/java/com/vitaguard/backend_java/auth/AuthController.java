@@ -15,10 +15,34 @@ public class AuthController {
 
     private final AuthService authService;
     private final UserRepository userRepository;
+    private final PasswordSetupService passwordSetupService;
 
-    public AuthController(AuthService authService, UserRepository userRepository) {
+    public AuthController(AuthService authService, UserRepository userRepository, PasswordSetupService passwordSetupService) {
         this.authService = authService;
         this.userRepository = userRepository;
+        this.passwordSetupService = passwordSetupService;
+    }
+
+    @GetMapping("/setup-password")
+    public ResponseEntity<?> verifySetupToken(@RequestParam String token) {
+        try {
+            Map<String, Object> details = passwordSetupService.getTokenDetails(token);
+            return ResponseEntity.ok(details);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        }
+    }
+
+    @PostMapping("/setup-password")
+    public ResponseEntity<?> completePasswordSetup(@RequestBody Map<String, String> body) {
+        try {
+            String token = body.get("token");
+            String newPassword = body.get("newPassword");
+            Map<String, Object> result = passwordSetupService.completePasswordSetup(token, newPassword);
+            return ResponseEntity.ok(result);
+        } catch (org.springframework.web.server.ResponseStatusException e) {
+            return ResponseEntity.status(e.getStatusCode()).body(Map.of("error", e.getReason()));
+        }
     }
 
     @PostMapping("/register")
