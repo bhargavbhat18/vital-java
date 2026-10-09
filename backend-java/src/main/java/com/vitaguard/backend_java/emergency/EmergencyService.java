@@ -32,6 +32,7 @@ public class EmergencyService {
     private final UserRepository userRepository;
     private final MedicalProfileRepository medicalProfileRepository;
     private final SimpMessagingTemplate messagingTemplate;
+    private final com.vitaguard.backend_java.ambulance.AmbulanceService ambulanceService;
     private final RestTemplate restTemplate = new RestTemplate();
 
     public EmergencyService(
@@ -43,7 +44,8 @@ public class EmergencyService {
             AmbulanceRepository ambulanceRepository,
             UserRepository userRepository,
             MedicalProfileRepository medicalProfileRepository,
-            SimpMessagingTemplate messagingTemplate
+            SimpMessagingTemplate messagingTemplate,
+            @org.springframework.context.annotation.Lazy com.vitaguard.backend_java.ambulance.AmbulanceService ambulanceService
     ) {
         this.emergencyRepository = emergencyRepository;
         this.eventRepository = eventRepository;
@@ -54,9 +56,14 @@ public class EmergencyService {
         this.userRepository = userRepository;
         this.medicalProfileRepository = medicalProfileRepository;
         this.messagingTemplate = messagingTemplate;
+        this.ambulanceService = ambulanceService;
     }
 
     public EmergencyRequest triggerSos(String patientUid, Double lat, Double lng, String symptoms, String description) {
+        return triggerSos(patientUid, lat, lng, symptoms, description, true);
+    }
+
+    public EmergencyRequest triggerSos(String patientUid, Double lat, Double lng, String symptoms, String description, Boolean requiresAmbulance) {
         // 1. Determine Department
         String department = classifyDepartment(patientUid, symptoms);
 
@@ -64,6 +71,9 @@ public class EmergencyService {
         Hospital matchedHospital = matchHospital(lat, lng, department);
 
         EmergencyRequest request = new EmergencyRequest(patientUid, lat, lng, symptoms, description);
+        if (requiresAmbulance != null) {
+            request.setRequiresAmbulance(requiresAmbulance);
+        }
         request.setRequiredDepartment(department);
         request.setHospitalId(matchedHospital != null ? matchedHospital.getId() : null);
         request.setStatus("DETECTED");
@@ -253,38 +263,8 @@ public class EmergencyService {
         logEvent(request.getId(), "AMBULANCE_REQUESTED", "Emergency ambulance request raised.");
         broadcastWorkflowUpdate(request, "AMBULANCE_REQUESTED");
 
-        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE");
-        if (availableAmbulances.isEmpty()) {
-            // No ambulance available
-            request.setAmbulanceId(null);
-            request.setStatus("AMBULANCE_UNAVAILABLE");
-            emergencyRepository.save(request);
-            logEvent(request.getId(), "AMBULANCE_UNAVAILABLE", "No ambulances currently available");
-            broadcastWorkflowUpdate(request, "AMBULANCE_UNAVAILABLE");
-            return;
-        }
-
-        Ambulance bestAmb = null;
-        double minDistance = Double.MAX_VALUE;
-
-        for (Ambulance amb : availableAmbulances) {
-            double dist = calculateDistance(request.getLatitude(), request.getLongitude(), amb.getLatitude(), amb.getLongitude());
-            if (dist < minDistance) {
-                minDistance = dist;
-                bestAmb = amb;
-            }
-        }
-
-        if (bestAmb != null) {
-            bestAmb.setStatus("REQUESTED");
-            bestAmb.setCurrentEmergencyId(request.getId());
-            ambulanceRepository.save(bestAmb);
-
-            request.setAmbulanceId(bestAmb.getId());
-            emergencyRepository.save(request);
-
-            // Notify driver via WebSocket
-            sendAmbulanceRequestToDriver(bestAmb, request, minDistance);
+        if (ambulanceService != null) {
+            ambulanceService.requestNearestAmbulance(request);
         }
     }
 

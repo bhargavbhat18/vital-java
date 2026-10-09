@@ -19,6 +19,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.Collectors;
 
 @Service
 public class AmbulanceService {
@@ -57,7 +58,9 @@ public class AmbulanceService {
             return null;
         }
 
-        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE");
+        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE").stream()
+                .filter(amb -> amb.getDriver() != null)
+                .collect(Collectors.toList());
         if (availableAmbulances.isEmpty()) {
             // No ambulances available
             emergency.setStatus("AMBULANCE_UNAVAILABLE");
@@ -107,9 +110,29 @@ public class AmbulanceService {
             return null;
         }
 
-        // Check if ambulance already has a pending request
-        if (requestRepository.findByAmbulanceIdAndStatusIn(ambulance.getId(),
-                List.of("PENDING", "ACCEPTED")).size() > 0) {
+        // Do not re-request an ambulance that already has a request (e.g. declined) for this emergency
+        if (requestRepository.findByEmergencyIdAndAmbulanceId(emergency.getId(), ambulance.getId()).isPresent()) {
+            return null;
+        }
+
+        // Clean up any stale requests for this ambulance where the emergency is cancelled or resolved
+        List<AmbulanceRequest> existing = requestRepository.findByAmbulanceIdAndStatusIn(ambulance.getId(), List.of("PENDING", "ACCEPTED"));
+        for (AmbulanceRequest ar : existing) {
+            Optional<EmergencyRequest> erOpt = emergencyRepository.findById(ar.getEmergencyId());
+            if (erOpt.isEmpty() || Boolean.TRUE.equals(erOpt.get().getCancelled()) || "RESOLVED".equals(erOpt.get().getStatus()) || "CANCELLED".equals(erOpt.get().getStatus())) {
+                ar.setStatus("RESOLVED".equals(erOpt.map(EmergencyRequest::getStatus).orElse("")) ? "COMPLETED" : "CANCELLED");
+                requestRepository.save(ar);
+            }
+        }
+
+        // Check if ambulance already has an active pending or accepted request
+        long activeCount = requestRepository.findByAmbulanceIdAndStatusIn(ambulance.getId(), List.of("PENDING", "ACCEPTED")).stream()
+                .filter(ar -> {
+                    Optional<EmergencyRequest> erOpt = emergencyRepository.findById(ar.getEmergencyId());
+                    return erOpt.isPresent() && !Boolean.TRUE.equals(erOpt.get().getCancelled()) 
+                            && !"RESOLVED".equals(erOpt.get().getStatus()) && !"CANCELLED".equals(erOpt.get().getStatus());
+                }).count();
+        if (activeCount > 0) {
             return null;
         }
 
@@ -158,7 +181,12 @@ public class AmbulanceService {
 
         // Verify driver owns the ambulance
         Ambulance ambulance = ambulanceRepository.findById(request.getAmbulanceId()).orElse(null);
-        if (ambulance == null || ambulance.getDriver() == null || !ambulance.getDriver().getId().equals(driverId)) {
+        User driver = userRepository.findById(driverId).orElse(null);
+        boolean isAuthorizedDriver = ambulance != null && (
+                (ambulance.getDriver() != null && ambulance.getDriver().getId().equals(driverId))
+                || (driver != null && ambulance.getId().equals(driver.getAmbulanceId()))
+        );
+        if (!isAuthorizedDriver) {
             return false;
         }
 
@@ -212,7 +240,12 @@ public class AmbulanceService {
         }
 
         Ambulance ambulance = ambulanceRepository.findById(request.getAmbulanceId()).orElse(null);
-        if (ambulance == null || ambulance.getDriver() == null || !ambulance.getDriver().getId().equals(driverId)) {
+        User driver = userRepository.findById(driverId).orElse(null);
+        boolean isAuthorizedDriver = ambulance != null && (
+                (ambulance.getDriver() != null && ambulance.getDriver().getId().equals(driverId))
+                || (driver != null && ambulance.getId().equals(driver.getAmbulanceId()))
+        );
+        if (!isAuthorizedDriver) {
             return false;
         }
 
@@ -235,7 +268,9 @@ public class AmbulanceService {
     }
 
     private void requestNextNearestAmbulance(EmergencyRequest emergency) {
-        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE");
+        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE").stream()
+                .filter(amb -> amb.getDriver() != null)
+                .collect(Collectors.toList());
         if (availableAmbulances.isEmpty()) {
             emergency.setStatus("AMBULANCE_UNAVAILABLE");
             emergencyRepository.save(emergency);
@@ -343,19 +378,29 @@ public class AmbulanceService {
                         emergencyWorkflowService.onAmbulanceEnRoute(emergency);
                         break;
                     case "ARRIVED_AT_PATIENT":
-                        // Keep current status or update if needed
+                        emergencyWorkflowService.onArrivedAtPatient(emergency);
                         break;
                     case "PATIENT_PICKED_UP":
                         emergencyWorkflowService.onPatientPickedUp(emergency);
                         break;
                     case "EN_ROUTE_TO_HOSPITAL":
-                        // En route to hospital
+                        emergencyWorkflowService.onEnRouteToHospital(emergency);
                         break;
                     case "ARRIVED_AT_HOSPITAL":
                         emergencyWorkflowService.onArrivedAtHospital(emergency);
                         break;
                     case "COMPLETED":
-                        // Emergency resolved
+                        if (ambulance.getCurrentEmergencyId() != null) {
+                            List<AmbulanceRequest> activeReqs = requestRepository.findByEmergencyIdAndStatusIn(
+                                    ambulance.getCurrentEmergencyId(), List.of("PENDING", "ACCEPTED"));
+                            for (AmbulanceRequest ar : activeReqs) {
+                                ar.setStatus("COMPLETED");
+                                requestRepository.save(ar);
+                            }
+                        }
+                        ambulance.setStatus("AVAILABLE");
+                        ambulance.setCurrentEmergencyId(null);
+                        ambulanceRepository.save(ambulance);
                         break;
                 }
 
@@ -374,11 +419,24 @@ public class AmbulanceService {
     }
 
     public Optional<Ambulance> getCurrentJob(Long driverId) {
-        return ambulanceRepository.findByDriverId(driverId);
+        Optional<Ambulance> ambOpt = ambulanceRepository.findByDriverId(driverId);
+        if (ambOpt.isEmpty()) {
+            User driver = userRepository.findById(driverId).orElse(null);
+            if (driver != null && driver.getAmbulanceId() != null) {
+                ambOpt = ambulanceRepository.findById(driver.getAmbulanceId());
+            }
+        }
+        return ambOpt;
     }
 
     public List<AmbulanceRequest> getPendingRequests(Long driverId) {
         Ambulance ambulance = ambulanceRepository.findByDriverId(driverId).orElse(null);
+        if (ambulance == null) {
+            User driver = userRepository.findById(driverId).orElse(null);
+            if (driver != null && driver.getAmbulanceId() != null) {
+                ambulance = ambulanceRepository.findById(driver.getAmbulanceId()).orElse(null);
+            }
+        }
         if (ambulance == null) return List.of();
         return requestRepository.findByAmbulanceIdAndStatusIn(ambulance.getId(), List.of("PENDING"));
     }

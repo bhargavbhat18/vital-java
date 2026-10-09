@@ -1,7 +1,8 @@
 package com.vitaguard.backend_java.ambulance;
 
-import com.vitaguard.backend_java.user.User;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -13,5 +14,7 @@ public interface AmbulanceRepository extends JpaRepository<Ambulance, Long> {
     List<Ambulance> findByStatus(String status);
     List<Ambulance> findByStatusIn(List<String> statuses);
     List<Ambulance> findByHospitalName(String hospitalName);
-    Optional<Ambulance> findByDriverId(Long driverId);
+
+    @Query("SELECT a FROM Ambulance a WHERE a.driver.id = :driverId")
+    Optional<Ambulance> findByDriverId(@Param("driverId") Long driverId);
 }

@@ -214,6 +214,13 @@ public class EmergencyWorkflowService {
                     ambulanceRepository.save(amb);
                 });
             }
+            for (Ambulance amb : ambulanceRepository.findByStatusIn(List.of("REQUESTED", "ACCEPTED"))) {
+                if (id.equals(amb.getCurrentEmergencyId())) {
+                    amb.setStatus("AVAILABLE");
+                    amb.setCurrentEmergencyId(null);
+                    ambulanceRepository.save(amb);
+                }
+            }
 
             // Release hospital capacity
             if (req.getHospitalId() != null) {
@@ -246,11 +253,25 @@ public class EmergencyWorkflowService {
         broadcastWorkflowUpdate(request, "AMBULANCE_DISPATCHED");
     }
 
+    public void onArrivedAtPatient(EmergencyRequest request) {
+        request.setStatus("ARRIVED_AT_PATIENT");
+        emergencyRepository.save(request);
+        logEvent(request.getId(), "ARRIVED_AT_PATIENT", "Ambulance arrived at patient location.");
+        broadcastWorkflowUpdate(request, "ARRIVED_AT_PATIENT");
+    }
+
     public void onPatientPickedUp(EmergencyRequest request) {
         request.setStatus("PATIENT_PICKED_UP");
         emergencyRepository.save(request);
         logEvent(request.getId(), "PATIENT_PICKED_UP", "Patient picked up by ambulance.");
         broadcastWorkflowUpdate(request, "PATIENT_PICKED_UP");
+    }
+
+    public void onEnRouteToHospital(EmergencyRequest request) {
+        request.setStatus("EN_ROUTE_TO_HOSPITAL");
+        emergencyRepository.save(request);
+        logEvent(request.getId(), "EN_ROUTE_TO_HOSPITAL", "Ambulance en route to hospital.");
+        broadcastWorkflowUpdate(request, "EN_ROUTE_TO_HOSPITAL");
     }
 
     public void onArrivedAtHospital(EmergencyRequest request) {

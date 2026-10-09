@@ -42,6 +42,10 @@ public class Doctor {
     public Hospital getHospital() { return hospital; }
     public void setHospital(Hospital hospital) { this.hospital = hospital; }
 
+    public Long getHospitalId() {
+        return hospital != null ? hospital.getId() : null;
+    }
+
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
 

@@ -140,6 +140,23 @@ public class DatabaseSeeder implements CommandLineRunner {
             }
         }
 
+        // Seed second ambulance driver user - DEMO ACCOUNT
+        User driverUser2 = null;
+        if (!userRepository.existsByEmail("driver2@vitalguard.com")) {
+            driverUser2 = new User("AMB_02", "driver2@vitalguard.com", passwordEncoder.encode("password"), "AMBULANCE_DRIVER");
+            driverUser2.setStatus("ACTIVE");
+            driverUser2.setFullName("Ambulance Driver 2 (AMB-02)");
+            driverUser2.setPhone("9880998866");
+            userRepository.save(driverUser2);
+            System.out.println("[SEED] Demo second ambulance driver seeded successfully.");
+        } else {
+            driverUser2 = userRepository.findByEmail("driver2@vitalguard.com").orElse(null);
+            if (driverUser2 != null && !"ACTIVE".equals(driverUser2.getStatus())) {
+                driverUser2.setStatus("ACTIVE");
+                userRepository.save(driverUser2);
+            }
+        }
+
         // Seed system admin user
         User sysAdmin = null;
         if (!userRepository.existsByEmail("sysadmin@vitaguard.com")) {
@@ -259,6 +276,16 @@ public class DatabaseSeeder implements CommandLineRunner {
             ambulanceRepository.save(amb1);
             userRepository.save(driverUser);
             System.out.println("[SEED] Linked ambulance driver to AMB-01 (Apollo Hospital).");
+        }
+
+        // Ensure second ambulance driver is linked to AMB-02 (idempotent)
+        Ambulance amb2 = ambulanceRepository.findByUnitId("AMB-02").orElse(null);
+        if (amb2 != null && driverUser2 != null && !amb2.getId().equals(driverUser2.getAmbulanceId())) {
+            amb2.setDriver(driverUser2);
+            driverUser2.setAmbulanceId(amb2.getId());
+            ambulanceRepository.save(amb2);
+            userRepository.save(driverUser2);
+            System.out.println("[SEED] Linked second ambulance driver to AMB-02 (Fortis Hospital).");
         }
 
         // Create family-patient relationship

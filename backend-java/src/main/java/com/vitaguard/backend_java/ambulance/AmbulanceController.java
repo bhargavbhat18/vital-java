@@ -23,17 +23,29 @@ public class AmbulanceController {
     private final AmbulanceRequestRepository requestRepository;
     private final EmergencyRequestRepository emergencyRepository;
     private final UserRepository userRepository;
+    private final com.vitaguard.backend_java.user.PatientFamilyRelationshipRepository relationshipRepository;
 
     public AmbulanceController(AmbulanceService ambulanceService,
                                AmbulanceRepository ambulanceRepository,
                                AmbulanceRequestRepository requestRepository,
                                EmergencyRequestRepository emergencyRepository,
                                UserRepository userRepository) {
+        this(ambulanceService, ambulanceRepository, requestRepository, emergencyRepository, userRepository, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AmbulanceController(AmbulanceService ambulanceService,
+                               AmbulanceRepository ambulanceRepository,
+                               AmbulanceRequestRepository requestRepository,
+                               EmergencyRequestRepository emergencyRepository,
+                               UserRepository userRepository,
+                               com.vitaguard.backend_java.user.PatientFamilyRelationshipRepository relationshipRepository) {
         this.ambulanceService = ambulanceService;
         this.ambulanceRepository = ambulanceRepository;
         this.requestRepository = requestRepository;
         this.emergencyRepository = emergencyRepository;
         this.userRepository = userRepository;
+        this.relationshipRepository = relationshipRepository;
     }
 
     @GetMapping
@@ -62,6 +74,9 @@ public class AmbulanceController {
         }
 
         Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
+        if (ambulanceOpt.isEmpty() && driver.getAmbulanceId() != null) {
+            ambulanceOpt = ambulanceRepository.findById(driver.getAmbulanceId());
+        }
         if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "No ambulance assigned to this driver"));
         }
@@ -151,6 +166,9 @@ public class AmbulanceController {
         }
 
         Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
+        if (ambulanceOpt.isEmpty() && driver.getAmbulanceId() != null) {
+            ambulanceOpt = ambulanceRepository.findById(driver.getAmbulanceId());
+        }
         if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No ambulance assigned to this driver"));
         }
@@ -202,6 +220,9 @@ public class AmbulanceController {
         }
 
         Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
+        if (ambulanceOpt.isEmpty() && driver.getAmbulanceId() != null) {
+            ambulanceOpt = ambulanceRepository.findById(driver.getAmbulanceId());
+        }
         if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No ambulance assigned to this driver"));
         }
@@ -277,10 +298,28 @@ public class AmbulanceController {
         Ambulance ambulance = ambulanceOpt.get();
 
         // Authorization: driver can see own, hospital admin can see their hospital's, system admin can see all
-        boolean authorized = "AMBULANCE_DRIVER".equals(currentUser.getRole()) && ambulance.getDriver() != null && ambulance.getDriver().getId().equals(currentUser.getId())
+        boolean authorized = "AMBULANCE_DRIVER".equals(currentUser.getRole()) && (
+                (ambulance.getDriver() != null && ambulance.getDriver().getId().equals(currentUser.getId()))
+                || (currentUser.getAmbulanceId() != null && currentUser.getAmbulanceId().equals(ambulance.getId()))
+        )
                 || "HOSPITAL_ADMIN".equals(currentUser.getRole()) && ambulance.getCurrentEmergencyId() != null
                 || "SYSTEM_ADMIN".equals(currentUser.getRole())
                 || "DOCTOR".equals(currentUser.getRole()) && ambulance.getCurrentEmergencyId() != null;
+
+        if (!authorized && ambulance.getCurrentEmergencyId() != null) {
+            Optional<EmergencyRequest> reqOpt = emergencyRepository.findById(ambulance.getCurrentEmergencyId());
+            if (reqOpt.isPresent()) {
+                EmergencyRequest req = reqOpt.get();
+                if ("PATIENT".equals(currentUser.getRole()) && currentUser.getUid().equals(req.getPatientUid())) {
+                    authorized = true;
+                } else if ("FAMILY_MEMBER".equals(currentUser.getRole()) && relationshipRepository != null) {
+                    User patient = userRepository.findByUid(req.getPatientUid()).orElse(null);
+                    if (patient != null) {
+                        authorized = relationshipRepository.existsByPatientIdAndFamilyUserIdAndActiveTrue(patient.getId(), currentUser.getId());
+                    }
+                }
+            }
+        }
 
         if (!authorized) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Unauthorized to view ambulance location"));

@@ -313,6 +313,7 @@ public class AdminController {
         if (authCheck != null) return authCheck;
 
         String name = (String) body.get("name");
+        if (name == null) name = (String) body.get("fullName");
         String email = (String) body.get("email");
         String phone = (String) body.get("phone");
         String specialization = (String) body.get("specialization");
@@ -947,7 +948,13 @@ public class AdminController {
 
         if (body.containsKey("unitId")) ambulance.setUnitId((String) body.get("unitId"));
         if (body.containsKey("hospitalName")) ambulance.setHospitalName((String) body.get("hospitalName"));
-        if (body.containsKey("status")) ambulance.setStatus((String) body.get("status"));
+        if (body.containsKey("status")) {
+            String newStatus = (String) body.get("status");
+            ambulance.setStatus(newStatus);
+            if ("AVAILABLE".equals(newStatus)) {
+                ambulance.setCurrentEmergencyId(null);
+            }
+        }
         if (body.containsKey("latitude")) ambulance.setLatitude(((Number) body.get("latitude")).doubleValue());
         if (body.containsKey("longitude")) ambulance.setLongitude(((Number) body.get("longitude")).doubleValue());
 
