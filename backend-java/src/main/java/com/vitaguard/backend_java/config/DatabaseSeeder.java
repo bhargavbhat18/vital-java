@@ -241,6 +241,17 @@ public class DatabaseSeeder implements CommandLineRunner {
             System.out.println("[SEED] Linked hospital admin to Apollo Hospital.");
         }
 
+        // Ensure doctor user is linked to Apollo Hospital and Doctor 1 (idempotent)
+        if (apollo != null && doctorUser != null) {
+            Doctor doc1 = doctorRepository.findByHospitalId(apollo.getId()).stream().findFirst().orElse(null);
+            if (doc1 != null && (!doc1.getId().equals(doctorUser.getDoctorId()) || !apollo.getId().equals(doctorUser.getHospitalId()))) {
+                doctorUser.setHospitalId(apollo.getId());
+                doctorUser.setDoctorId(doc1.getId());
+                userRepository.save(doctorUser);
+                System.out.println("[SEED] Linked doctor user to Apollo Hospital Doctor " + doc1.getId() + " (" + doc1.getName() + ").");
+            }
+        }
+
         // Seed ambulances if empty
         if (ambulanceRepository.count() == 0) {
             // Seed ambulances located initially at respective hospitals

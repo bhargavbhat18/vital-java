@@ -268,6 +268,32 @@ class EmergencyControllerTest {
         assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
     }
 
+    @Test
+    void testResolveCase_DuplicateAttempt_ReturnsConflict() {
+        // Arrange
+        String doctorUid = "DOC_01";
+        User doctor = new User(doctorUid, "doc@test.com", "pass", "DOCTOR");
+        doctor.setId(1L);
+
+        EmergencyRequest request = new EmergencyRequest();
+        request.setId(1L);
+        request.setDoctorId(1L);
+        request.setStatus("RESOLVED"); // Already resolved
+
+        setupSecurityContext(doctor);
+
+        when(emergencyRepository.findById(1L)).thenReturn(Optional.of(request));
+        when(userRepository.findByUid(doctorUid)).thenReturn(Optional.of(doctor));
+
+        // Act
+        ResponseEntity<?> response = emergencyController.resolveCase(1L);
+
+        // Assert
+        assertEquals(HttpStatus.CONFLICT, response.getStatusCode());
+        assertInstanceOf(Map.class, response.getBody());
+        assertEquals("Emergency is already resolved", ((Map<?, ?>) response.getBody()).get("error"));
+    }
+
     private void setupSecurityContext(User user) {
         Authentication auth = mock(Authentication.class);
         when(auth.getName()).thenReturn(user.getUid());

@@ -12,6 +12,51 @@ import GoogleMapTracking from '../components/GoogleMapTracking';
 import ConfirmModal from '../components/ConfirmModal';
 import { EmptyState, LoadingState } from '../components/StateComponents';
 
+const getWorkflowAmbulanceStatus = (sos, tracking) => {
+  if (!sos) return 'Standby';
+  if (sos.requiresAmbulance === false || sos.status === 'AMBULANCE_NOT_REQUIRED') {
+    return 'Not Required';
+  }
+  if (tracking?.status) {
+    return tracking.status.replace(/_/g, ' ');
+  }
+  if (sos.ambulanceStatus) {
+    return sos.ambulanceStatus.replace(/_/g, ' ');
+  }
+  switch (sos.status) {
+    case 'CREATED':
+    case 'SEARCHING_HOSPITAL':
+    case 'DETECTED':
+      return 'Searching Hospital';
+    case 'HOSPITAL_ASSIGNED':
+      return 'Awaiting Hospital Acceptance';
+    case 'HOSPITAL_ACCEPTED':
+      return 'Hospital Accepted - Assigning';
+    case 'AMBULANCE_REQUESTED':
+      return 'Request Sent to Driver';
+    case 'AMBULANCE_ACCEPTED':
+      return 'Driver Accepted - Preparing Dispatch';
+    case 'AMBULANCE_DISPATCHED':
+    case 'EN_ROUTE_TO_PATIENT':
+      return 'En Route to Patient';
+    case 'ARRIVED_AT_PATIENT':
+      return 'Arrived at Patient';
+    case 'PATIENT_PICKED_UP':
+      return 'Patient Picked Up';
+    case 'EN_ROUTE_TO_HOSPITAL':
+      return 'En Route to Hospital';
+    case 'ARRIVED_AT_HOSPITAL':
+      return 'Arrived at Hospital';
+    case 'RESOLVED':
+    case 'COMPLETED':
+      return 'Resolved';
+    case 'CANCELLED':
+      return 'Cancelled';
+    default:
+      return sos.status ? sos.status.replace(/_/g, ' ') : 'Standby';
+  }
+};
+
 const FamilyDashboard = () => {
   const { user } = useAuth();
   const [selectedPatientUid, setSelectedPatientUid] = useState(null);
@@ -53,8 +98,10 @@ const FamilyDashboard = () => {
 
   // WebSocket real-time subscription for family member & selected patient
   const { connected: wsConnected, revision, refresh, tracking: trackingData } = useRealtimeRefresh(
+    user?.uid,
+    trackedEmergencyId,
     selectedPatientUid || user?.uid,
-    trackedEmergencyId
+    user
   );
 
   // Fetch linked patients for this family member
@@ -482,28 +529,28 @@ const FamilyDashboard = () => {
               <div className="emergency-status-item">
                 <span className="emergency-status-label">Risk Score</span>
                 <span className="emergency-status-value" style={{ color: 'var(--color-critical)' }}>
-                  {activeSos.riskScore || 92} / 100
+                  {activeSos.riskScore != null ? `${activeSos.riskScore} / 100` : 'Assessing...'}
                 </span>
               </div>
 
               <div className="emergency-status-item">
                 <span className="emergency-status-label">Assigned Hospital</span>
                 <span className="emergency-status-value">
-                  {assignedHospital?.name || activeSos.hospitalName || 'City Hospital'}
+                  {assignedHospital?.name || activeSos.hospitalName || 'Searching Hospital...'}
                 </span>
               </div>
 
               <div className="emergency-status-item">
                 <span className="emergency-status-label">Doctor</span>
                 <span className="emergency-status-value">
-                  {assignedDoctor?.name ? `Dr. ${assignedDoctor.name}` : 'Specialist Assigned'}
+                  {assignedDoctor?.name ? `Dr. ${assignedDoctor.name}` : (activeSos.doctorName ? (activeSos.doctorName.startsWith('Dr.') ? activeSos.doctorName : `Dr. ${activeSos.doctorName}`) : (activeSos.status === 'HOSPITAL_ASSIGNED' ? 'Pending Acceptance' : 'Awaiting Assignment'))}
                 </span>
               </div>
 
               <div className="emergency-status-item">
                 <span className="emergency-status-label">Ambulance</span>
                 <span className="emergency-status-value" style={{ color: 'var(--color-secondary)' }}>
-                  {trackingData?.status ? trackingData.status.replace(/_/g, ' ') : (activeSos.ambulanceStatus?.replace(/_/g, ' ') || 'EN ROUTE TO PATIENT')}
+                  {getWorkflowAmbulanceStatus(activeSos, trackingData)}
                 </span>
               </div>
             </div>

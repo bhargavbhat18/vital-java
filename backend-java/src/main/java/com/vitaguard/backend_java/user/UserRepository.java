@@ -21,6 +21,7 @@ public interface UserRepository extends JpaRepository<User, Long> {
     java.util.List<User> findByStatus(String status);
     java.util.List<User> findByHospitalId(Long hospitalId);
     java.util.List<User> findByAmbulanceId(Long ambulanceId);
+    Optional<User> findByDoctorId(Long doctorId);
     long countByRole(String role);
     long countByRoleAndStatus(String role, String status);
     long countByStatus(String status);

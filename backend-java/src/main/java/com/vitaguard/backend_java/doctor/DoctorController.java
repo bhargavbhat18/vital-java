@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import com.vitaguard.backend_java.emergency.EmergencyWorkflowService;
+
 @RestController
 @RequestMapping("/api/doctor")
 public class DoctorController {
@@ -27,17 +29,29 @@ public class DoctorController {
     private final UserRepository userRepository;
     private final HospitalRepository hospitalRepository;
     private final AmbulanceRepository ambulanceRepository;
+    private final EmergencyWorkflowService workflowService;
 
     public DoctorController(DoctorRepository doctorRepository,
                             EmergencyRequestRepository emergencyRepository,
                             UserRepository userRepository,
                             HospitalRepository hospitalRepository,
                             AmbulanceRepository ambulanceRepository) {
+        this(doctorRepository, emergencyRepository, userRepository, hospitalRepository, ambulanceRepository, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public DoctorController(DoctorRepository doctorRepository,
+                            EmergencyRequestRepository emergencyRepository,
+                            UserRepository userRepository,
+                            HospitalRepository hospitalRepository,
+                            AmbulanceRepository ambulanceRepository,
+                            @org.springframework.beans.factory.annotation.Autowired(required = false) EmergencyWorkflowService workflowService) {
         this.doctorRepository = doctorRepository;
         this.emergencyRepository = emergencyRepository;
         this.userRepository = userRepository;
         this.hospitalRepository = hospitalRepository;
         this.ambulanceRepository = ambulanceRepository;
+        this.workflowService = workflowService;
     }
 
     private Optional<Doctor> getDoctorForUser(User doctorUser) {
@@ -162,7 +176,7 @@ public class DoctorController {
         return ResponseEntity.ok(doctor);
     }
 
-    @PostMapping("/emergency/{emergencyId}/resolve")
+    @PostMapping({"/emergency/{emergencyId}/resolve", "/resolve/{emergencyId}"})
     public ResponseEntity<?> resolveEmergency(@PathVariable Long emergencyId) {
         String doctorUid = SecurityContextHolder.getContext().getAuthentication().getName();
         User doctorUser = userRepository.findByUid(doctorUid).orElse(null);
@@ -178,38 +192,51 @@ public class DoctorController {
 
         EmergencyRequest emergency = emergencyOpt.get();
 
-        // Verify this doctor is assigned to this emergency
+        // Verify this doctor is assigned to this emergency or belongs to the assigned hospital
         Optional<Doctor> doctorOpt = getDoctorForUser(doctorUser);
-        if (doctorOpt.isEmpty() || !doctorOpt.get().getId().equals(emergency.getDoctorId())) {
+        Long docId = doctorOpt.map(Doctor::getId).orElse(doctorUser.getDoctorId() != null ? doctorUser.getDoctorId() : doctorUser.getId());
+        boolean isAssignedDoctor = (emergency.getDoctorId() != null && (emergency.getDoctorId().equals(docId) || emergency.getDoctorId().equals(doctorUser.getId())))
+                || (emergency.getHospitalId() != null && (emergency.getHospitalId().equals(doctorUser.getHospitalId()) || (doctorOpt.isPresent() && emergency.getHospitalId().equals(doctorOpt.get().getHospitalId()))));
+
+        if (!isAssignedDoctor) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Not authorized to resolve this emergency"));
         }
 
-        emergency.setStatus("RESOLVED");
-        emergency.setCompletedAt(java.time.LocalDateTime.now());
-        emergencyRepository.save(emergency);
-
-        // Release doctor
-        doctorOpt.ifPresent(doc -> {
-            doc.setAvailableForEmergency(true);
-            doctorRepository.save(doc);
-        });
-
-        // Release hospital resources
-        if (emergency.getHospitalId() != null) {
-            hospitalRepository.findById(emergency.getHospitalId()).ifPresent(h -> {
-                h.setAvailableBeds(Math.min(h.getTotalBeds(), h.getAvailableBeds() + 1));
-                h.setAvailableDoctors(Math.min(h.getTotalDoctors(), h.getAvailableDoctors() + 1));
-                hospitalRepository.save(h);
-            });
+        // Reject duplicate resolution attempts
+        if ("RESOLVED".equalsIgnoreCase(emergency.getStatus()) || "COMPLETED".equalsIgnoreCase(emergency.getStatus())) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "Emergency is already resolved"));
         }
 
-        // Release ambulance
-        if (emergency.getAmbulanceId() != null) {
-            ambulanceRepository.findById(emergency.getAmbulanceId()).ifPresent(amb -> {
-                amb.setStatus("AVAILABLE");
-                amb.setCurrentEmergencyId(null);
-                ambulanceRepository.save(amb);
+        if (workflowService != null) {
+            workflowService.resolveEmergency(emergencyId);
+        } else {
+            emergency.setStatus("RESOLVED");
+            emergency.setCompletedAt(java.time.LocalDateTime.now());
+            emergencyRepository.save(emergency);
+
+            // Release doctor
+            doctorOpt.ifPresent(doc -> {
+                doc.setAvailableForEmergency(true);
+                doctorRepository.save(doc);
             });
+
+            // Release hospital resources
+            if (emergency.getHospitalId() != null) {
+                hospitalRepository.findById(emergency.getHospitalId()).ifPresent(h -> {
+                    h.setAvailableBeds(Math.min(h.getTotalBeds(), h.getAvailableBeds() + 1));
+                    h.setAvailableDoctors(Math.min(h.getTotalDoctors(), h.getAvailableDoctors() + 1));
+                    hospitalRepository.save(h);
+                });
+            }
+
+            // Release ambulance
+            if (emergency.getAmbulanceId() != null) {
+                ambulanceRepository.findById(emergency.getAmbulanceId()).ifPresent(amb -> {
+                    amb.setStatus("AVAILABLE");
+                    amb.setCurrentEmergencyId(null);
+                    ambulanceRepository.save(amb);
+                });
+            }
         }
 
         Map<String, Object> res = new HashMap<>();

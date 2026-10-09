@@ -211,6 +211,31 @@ class EmergencyWorkflowTest {
         assertNull(ambulance.getCurrentEmergencyId());
         assertEquals(85, hospital.getAvailableBeds());
         assertEquals(12, hospital.getAvailableDoctors());
+
+        // Verify timeline event is persisted exactly once
+        verify(eventRepository, times(1)).save(argThat(event -> 
+                Long.valueOf(1L).equals(event.getEmergencyId()) && "RESOLVED".equals(event.getStatus())));
+        verify(messagingTemplate, atLeastOnce()).convertAndSend(eq("/topic/emergency/1"), any(Object.class));
+    }
+
+    @Test
+    void testResolveEmergency_DuplicateResolution_ThrowsIllegalStateExceptionAndDoesNotDuplicate() {
+        // Arrange
+        EmergencyRequest request = new EmergencyRequest();
+        request.setId(2L);
+        request.setStatus("RESOLVED"); // Already resolved
+
+        when(emergencyRepository.findById(2L)).thenReturn(Optional.of(request));
+
+        // Act & Assert
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> workflowService.resolveEmergency(2L));
+        assertEquals("Emergency is already resolved", ex.getMessage());
+
+        // Ensure no new event was saved
+        verify(eventRepository, never()).save(argThat(event -> Long.valueOf(2L).equals(event.getEmergencyId())));
+        // Ensure hospital and doctor were not touched
+        verify(hospitalRepository, never()).save(any());
+        verify(doctorRepository, never()).save(any());
     }
 
     @Test

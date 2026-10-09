@@ -17,6 +17,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final AuthenticationManager authenticationManager;
+    private final com.vitaguard.backend_java.doctor.DoctorRepository doctorRepository;
 
     public AuthService(
             UserRepository userRepository,
@@ -24,10 +25,22 @@ public class AuthService {
             JwtService jwtService,
             AuthenticationManager authenticationManager
     ) {
+        this(userRepository, passwordEncoder, jwtService, authenticationManager, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public AuthService(
+            UserRepository userRepository,
+            PasswordEncoder passwordEncoder,
+            JwtService jwtService,
+            AuthenticationManager authenticationManager,
+            @org.springframework.context.annotation.Lazy com.vitaguard.backend_java.doctor.DoctorRepository doctorRepository
+    ) {
         this.userRepository = userRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.authenticationManager = authenticationManager;
+        this.doctorRepository = doctorRepository;
     }
 
     public AuthResponse register(RegisterRequest request) {
@@ -69,7 +82,7 @@ public class AuthService {
 
         userRepository.save(user);
         String jwtToken = jwtService.generateToken(user);
-        return new AuthResponse(jwtToken, user.getUid(), user.getEmail(), user.getRole(), user.getFullName());
+        return new AuthResponse(jwtToken, user.getUid(), user.getEmail(), user.getRole(), user.getFullName(), user.getHospitalId(), user.getAmbulanceId(), user.getId(), user.getDoctorId());
     }
 
     public AuthResponse login(LoginRequest request) {
@@ -112,8 +125,22 @@ public class AuthService {
                 )
         );
 
-        // 6. Generate JWT token
+        // 6. Resolve doctor profile if user is DOCTOR
+        Long doctorId = user.getDoctorId();
+        if (doctorId == null && "DOCTOR".equals(user.getRole()) && doctorRepository != null && user.getHospitalId() != null) {
+            doctorId = doctorRepository.findByHospitalId(user.getHospitalId()).stream()
+                    .filter(d -> d.getName().equalsIgnoreCase(user.getFullName()) || (d.getPhone() != null && d.getPhone().equals(user.getPhone())))
+                    .map(com.vitaguard.backend_java.doctor.Doctor::getId)
+                    .findFirst()
+                    .orElse(null);
+            if (doctorId != null) {
+                user.setDoctorId(doctorId);
+                userRepository.save(user);
+            }
+        }
+
+        // 7. Generate JWT token
         String jwtToken = jwtService.generateToken(user);
-        return new AuthResponse(jwtToken, user.getUid(), user.getEmail(), user.getRole(), user.getFullName(), user.getHospitalId(), user.getAmbulanceId());
+        return new AuthResponse(jwtToken, user.getUid(), user.getEmail(), user.getRole(), user.getFullName(), user.getHospitalId(), user.getAmbulanceId(), user.getId(), doctorId != null ? doctorId : user.getId());
     }
 }

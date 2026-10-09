@@ -20,7 +20,7 @@ export const createStompClient = (onConnect, onError) => {
   return client;
 };
 
-export function useRealtimeRefresh(uid, emergencyId, patientUid = uid) {
+export function useRealtimeRefresh(uid, emergencyId, patientUid = uid, user = null) {
   const [connected, setConnected] = useState(false);
   const [revision, setRevision] = useState(0);
   const [tracking, setTracking] = useState(null);
@@ -68,16 +68,16 @@ export function useRealtimeRefresh(uid, emergencyId, patientUid = uid) {
     if (patientUid) topics.push(`/topic/vitals/${patientUid}`, `/topic/ai-risk/${patientUid}`, `/topic/family-notifications/${patientUid}`);
     if (emergencyId != null) topics.push(`/topic/emergency/${emergencyId}`);
     // Add role-specific topics
-    const userRole = localStorage.getItem('userRole');
+    const userRole = user?.role || localStorage.getItem('userRole');
     if (userRole === 'HOSPITAL_ADMIN') {
-      const hospitalId = localStorage.getItem('hospitalId');
+      const hospitalId = user?.hospitalId || localStorage.getItem('hospitalId');
       if (hospitalId) topics.push(`/topic/hospital/${hospitalId}/emergencies`);
     } else if (userRole === 'DOCTOR') {
-      const doctorId = localStorage.getItem('doctorId');
+      const doctorId = user?.doctorId || user?.id || localStorage.getItem('doctorId');
       if (doctorId) topics.push(`/topic/doctor/${doctorId}/emergencies`);
     } else if (userRole === 'AMBULANCE_DRIVER') {
-      const ambulanceId = localStorage.getItem('ambulanceId');
-      const driverId = localStorage.getItem('userId');
+      const ambulanceId = user?.ambulanceId || localStorage.getItem('ambulanceId');
+      const driverId = user?.id || localStorage.getItem('userId');
       if (ambulanceId) topics.push(`/topic/ambulance/${ambulanceId}`);
       if (driverId) topics.push(`/topic/ambulance/request/${driverId}`);
     }
@@ -127,7 +127,7 @@ export function useRealtimeRefresh(uid, emergencyId, patientUid = uid) {
         if (client.connected) subscription.unsubscribe();
       });
     };
-  }, [client, connected, patientUid, emergencyId, refresh]);
+  }, [client, connected, patientUid, emergencyId, refresh, user]);
 
   return { connected, revision, refresh, tracking: tracking?.emergencyId === emergencyId ? tracking : null, ambulanceLocation };
 }

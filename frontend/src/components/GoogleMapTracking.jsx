@@ -208,6 +208,9 @@ const GoogleMapTracking = ({
 
   // Tactical Fallback Canvas when Google Maps Key is not supplied
   const renderTacticalCanvas = () => {
+    const isDispatched = !['HOSPITAL_ASSIGNED', 'CREATED', 'SEARCHING_HOSPITAL', 'AMBULANCE_NOT_REQUIRED', 'RESOLVED'].includes(ambulanceStatus);
+    const isHeadingToHospital = ['PATIENT_PICKED_UP', 'EN_ROUTE_TO_HOSPITAL', 'ARRIVED_AT_HOSPITAL'].includes(ambulanceStatus);
+
     return (
       <div style={{
         position: 'relative',
@@ -246,14 +249,16 @@ const GoogleMapTracking = ({
           </defs>
 
           {/* Animated Route Line */}
-          <path
-            d="M 160,280 Q 320,160 520,200 T 780,120"
-            fill="none"
-            stroke="url(#routeGradient)"
-            strokeWidth="4"
-            strokeDasharray="8 6"
-            filter="url(#glow)"
-          />
+          {isDispatched && (
+            <path
+              d={isHeadingToHospital ? "M 520,200 Q 640,160 780,120" : "M 160,280 Q 320,220 520,200"}
+              fill="none"
+              stroke="url(#routeGradient)"
+              strokeWidth="4"
+              strokeDasharray="8 6"
+              filter="url(#glow)"
+            />
+          )}
         </svg>
 
         {/* Marker 1: Hospital (Top Right) */}
@@ -314,35 +319,60 @@ const GoogleMapTracking = ({
           </span>
         </div>
 
-        {/* Marker 3: Ambulance (Bottom Left - Animated) */}
-        <div style={{
-          position: 'absolute',
-          bottom: '28%',
-          left: '18%',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '4px'
-        }}>
+        {/* Marker 3: Ambulance (Visible when dispatched) */}
+        {isDispatched && (
           <div style={{
-            width: '46px',
-            height: '46px',
-            borderRadius: '50%',
-            background: '#dc2626',
-            border: '3px solid #f87171',
-            boxShadow: '0 0 20px rgba(239, 68, 68, 0.6)',
+            position: 'absolute',
+            bottom: isHeadingToHospital ? '52%' : '28%',
+            left: isHeadingToHospital ? '62%' : '18%',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '4px',
+            transition: 'all 0.5s ease'
+          }}>
+            <div style={{
+              width: '46px',
+              height: '46px',
+              borderRadius: '50%',
+              background: '#dc2626',
+              border: '3px solid #f87171',
+              boxShadow: '0 0 20px rgba(239, 68, 68, 0.6)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '22px',
+              animation: 'pulse-ring 1.8s infinite'
+            }}>
+              🚑
+            </div>
+            <span style={{ fontSize: '11px', color: '#fef2f2', background: 'rgba(220, 38, 38, 0.85)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
+              {ambulanceUnitId}
+            </span>
+          </div>
+        )}
+
+        {!isDispatched && (
+          <div style={{
+            position: 'absolute',
+            bottom: '20px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            background: 'rgba(15, 23, 42, 0.85)',
+            border: '1px solid rgba(56, 189, 248, 0.3)',
+            color: '#94a3b8',
+            fontSize: '12px',
+            padding: '6px 14px',
+            borderRadius: '20px',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: '22px',
-            animation: 'pulse-ring 1.8s infinite'
+            gap: '8px'
           }}>
-            🚑
+            <span>🚑 Ambulance Standby</span>
+            <span>•</span>
+            <span style={{ color: '#38bdf8' }}>GPS Tracking Active Upon Dispatch</span>
           </div>
-          <span style={{ fontSize: '11px', color: '#fef2f2', background: 'rgba(220, 38, 38, 0.85)', padding: '2px 8px', borderRadius: '4px', fontWeight: 'bold' }}>
-            {ambulanceUnitId}
-          </span>
-        </div>
+        )}
 
         {/* Telemetry Radar Watermark */}
         <div style={{

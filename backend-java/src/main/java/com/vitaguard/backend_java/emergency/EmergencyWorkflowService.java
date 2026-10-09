@@ -2,6 +2,8 @@ package com.vitaguard.backend_java.emergency;
 
 import com.vitaguard.backend_java.ambulance.Ambulance;
 import com.vitaguard.backend_java.ambulance.AmbulanceRepository;
+import com.vitaguard.backend_java.ambulance.AmbulanceRequest;
+import com.vitaguard.backend_java.ambulance.AmbulanceRequestRepository;
 import com.vitaguard.backend_java.ambulance.AmbulanceService;
 import com.vitaguard.backend_java.doctor.Doctor;
 import com.vitaguard.backend_java.doctor.DoctorRepository;
@@ -12,6 +14,7 @@ import com.vitaguard.backend_java.medical.MedicalProfileRepository;
 import com.vitaguard.backend_java.user.User;
 import com.vitaguard.backend_java.user.UserRepository;
 import com.vitaguard.backend_java.medical.RiskResult;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -39,6 +42,7 @@ public class EmergencyWorkflowService {
     private final FamilyNotificationService familyNotificationService;
     private final SimpMessagingTemplate messagingTemplate;
     private final MedicalProfileRepository medicalProfileRepository;
+    private final AmbulanceRequestRepository ambulanceRequestRepository;
 
     public EmergencyWorkflowService(
             EmergencyRequestRepository emergencyRepository,
@@ -54,6 +58,27 @@ public class EmergencyWorkflowService {
             SimpMessagingTemplate messagingTemplate,
             MedicalProfileRepository medicalProfileRepository
     ) {
+        this(emergencyRepository, eventRepository, hospitalRepository, departmentRepository,
+                recommendationService, doctorRepository, ambulanceRepository, ambulanceService,
+                userRepository, familyNotificationService, messagingTemplate, medicalProfileRepository, null);
+    }
+
+    @Autowired
+    public EmergencyWorkflowService(
+            EmergencyRequestRepository emergencyRepository,
+            EmergencyEventRepository eventRepository,
+            HospitalRepository hospitalRepository,
+            HospitalDepartmentRepository departmentRepository,
+            HospitalRecommendationService recommendationService,
+            DoctorRepository doctorRepository,
+            AmbulanceRepository ambulanceRepository,
+            AmbulanceService ambulanceService,
+            UserRepository userRepository,
+            FamilyNotificationService familyNotificationService,
+            SimpMessagingTemplate messagingTemplate,
+            MedicalProfileRepository medicalProfileRepository,
+            @Autowired(required = false) AmbulanceRequestRepository ambulanceRequestRepository
+    ) {
         this.emergencyRepository = emergencyRepository;
         this.eventRepository = eventRepository;
         this.hospitalRepository = hospitalRepository;
@@ -66,6 +91,7 @@ public class EmergencyWorkflowService {
         this.familyNotificationService = familyNotificationService;
         this.messagingTemplate = messagingTemplate;
         this.medicalProfileRepository = medicalProfileRepository;
+        this.ambulanceRequestRepository = ambulanceRequestRepository;
     }
 
     public EmergencyRequest initiateAutomaticEmergency(String patientUid, Double hr, Double spo2, Double temp, Double lat, Double lng, RiskResult risk) {
@@ -147,46 +173,68 @@ public class EmergencyWorkflowService {
         ambulanceService.requestNearestAmbulance(request);
     }
 
-    public void resolveEmergency(Long id) {
+    public EmergencyRequest resolveEmergency(Long id) {
         Optional<EmergencyRequest> reqOpt = emergencyRepository.findById(id);
-        if (reqOpt.isPresent()) {
-            EmergencyRequest req = reqOpt.get();
-            if ("RESOLVED".equalsIgnoreCase(req.getStatus()) || "COMPLETED".equalsIgnoreCase(req.getStatus())) {
-                return;
-            }
-            req.setStatus("RESOLVED");
-            req.setCompletedAt(LocalDateTime.now());
-            emergencyRepository.save(req);
-
-            // Release doctor
-            if (req.getDoctorId() != null && req.getDoctorId() > 0) {
-                doctorRepository.findById(req.getDoctorId()).ifPresent(doc -> {
-                    doc.setAvailableForEmergency(true);
-                    doctorRepository.save(doc);
-                });
-            }
-
-            // Release ambulance
-            if (req.getAmbulanceId() != null) {
-                ambulanceRepository.findById(req.getAmbulanceId()).ifPresent(amb -> {
-                    amb.setStatus("AVAILABLE");
-                    amb.setCurrentEmergencyId(null);
-                    ambulanceRepository.save(amb);
-                });
-            }
-
-            // Release hospital capacity
-            if (req.getHospitalId() != null) {
-                hospitalRepository.findById(req.getHospitalId()).ifPresent(h -> {
-                    h.setAvailableBeds(Math.min(h.getTotalBeds(), h.getAvailableBeds() + 1));
-                    h.setAvailableDoctors(Math.min(h.getTotalDoctors(), h.getAvailableDoctors() + 1));
-                    hospitalRepository.save(h);
-                });
-            }
-
-            logEvent(id, "RESOLVED", "Emergency resolved successfully. Resources released.");
-            broadcastWorkflowUpdate(req, "RESOLVED");
+        if (reqOpt.isEmpty()) {
+            throw new IllegalArgumentException("Emergency request not found: " + id);
         }
+        EmergencyRequest req = reqOpt.get();
+        if ("RESOLVED".equalsIgnoreCase(req.getStatus()) || "COMPLETED".equalsIgnoreCase(req.getStatus())) {
+            throw new IllegalStateException("Emergency is already resolved");
+        }
+        req.setStatus("RESOLVED");
+        req.setCompletedAt(LocalDateTime.now());
+        emergencyRepository.save(req);
+
+        // Release doctor
+        if (req.getDoctorId() != null && req.getDoctorId() > 0) {
+            doctorRepository.findById(req.getDoctorId()).ifPresent(doc -> {
+                doc.setAvailableForEmergency(true);
+                doctorRepository.save(doc);
+            });
+        }
+
+        // Release ambulance
+        if (req.getAmbulanceId() != null) {
+            ambulanceRepository.findById(req.getAmbulanceId()).ifPresent(amb -> {
+                amb.setStatus("AVAILABLE");
+                amb.setCurrentEmergencyId(null);
+                ambulanceRepository.save(amb);
+            });
+        }
+        ambulanceRepository.findByCurrentEmergencyId(id).ifPresent(amb -> {
+            amb.setStatus("AVAILABLE");
+            amb.setCurrentEmergencyId(null);
+            ambulanceRepository.save(amb);
+        });
+        for (Ambulance amb : ambulanceRepository.findByStatusIn(List.of("REQUESTED", "ACCEPTED", "DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP", "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL"))) {
+            if (id.equals(amb.getCurrentEmergencyId())) {
+                amb.setStatus("AVAILABLE");
+                amb.setCurrentEmergencyId(null);
+                ambulanceRepository.save(amb);
+            }
+        }
+
+        // Complete any pending/accepted ambulance requests
+        if (ambulanceRequestRepository != null) {
+            for (AmbulanceRequest ar : ambulanceRequestRepository.findByEmergencyIdAndStatusIn(id, List.of("PENDING", "ACCEPTED"))) {
+                ar.setStatus("COMPLETED");
+                ambulanceRequestRepository.save(ar);
+            }
+        }
+
+        // Release hospital capacity
+        if (req.getHospitalId() != null) {
+            hospitalRepository.findById(req.getHospitalId()).ifPresent(h -> {
+                h.setAvailableBeds(Math.min(h.getTotalBeds(), h.getAvailableBeds() + 1));
+                h.setAvailableDoctors(Math.min(h.getTotalDoctors(), h.getAvailableDoctors() + 1));
+                hospitalRepository.save(h);
+            });
+        }
+
+        logEvent(id, "RESOLVED", "Emergency resolved successfully. Resources released.");
+        broadcastWorkflowUpdate(req, "RESOLVED");
+        return req;
     }
 
     public void cancelEmergency(Long id) {
@@ -309,11 +357,30 @@ public class EmergencyWorkflowService {
 
             logEvent(request.getId(), "DOCTOR_ASSIGNED", "Doctor " + doc.getName() + " (" + doc.getSpecialization() + ") assigned.");
         } else {
-            // Assign to general emergency team
-            request.setDoctorId(-1L);
-            request.setStatus("DOCTOR_ASSIGNED");
-            emergencyRepository.save(request);
-            logEvent(request.getId(), "DOCTOR_ASSIGNED", "Specialist doctor unavailable. Assigned to emergency duty team.");
+            // Check any doctor on duty and available at the assigned hospital
+            List<Doctor> anyAvailable = doctorRepository.findByHospitalIdAndOnDuty(request.getHospitalId(), true)
+                    .stream()
+                    .filter(Doctor::getAvailableForEmergency)
+                    .toList();
+            if (!anyAvailable.isEmpty()) {
+                Doctor doc = anyAvailable.get(0);
+                doc.setAvailableForEmergency(false);
+                doctorRepository.save(doc);
+                request.setDoctorId(doc.getId());
+                request.setStatus("DOCTOR_ASSIGNED");
+                emergencyRepository.save(request);
+                hospitalRepository.findById(request.getHospitalId()).ifPresent(h -> {
+                    h.setAvailableDoctors(Math.max(0, h.getAvailableDoctors() - 1));
+                    hospitalRepository.save(h);
+                });
+                logEvent(request.getId(), "DOCTOR_ASSIGNED", "Doctor " + doc.getName() + " (" + doc.getSpecialization() + ") assigned from available hospital staff.");
+            } else {
+                // Assign to general emergency team
+                request.setDoctorId(-1L);
+                request.setStatus("DOCTOR_ASSIGNED");
+                emergencyRepository.save(request);
+                logEvent(request.getId(), "DOCTOR_ASSIGNED", "Specialist doctor unavailable. Assigned to emergency duty team.");
+            }
         }
     }
 
@@ -364,8 +431,9 @@ public class EmergencyWorkflowService {
         // Broadcast to emergency-specific topic
         messagingTemplate.convertAndSend("/topic/emergency/" + request.getId(), wsPayload);
 
-        // Broadcast to general emergency updates
+        // Broadcast to general emergency updates and hospital queue refresh
         messagingTemplate.convertAndSend("/topic/emergency-updates", wsPayload);
+        messagingTemplate.convertAndSend("/topic/hospital-queue-refresh", "refresh");
 
         // Broadcast to hospital topic
         if (request.getHospitalId() != null) {
@@ -375,6 +443,11 @@ public class EmergencyWorkflowService {
         // Broadcast to doctor topic
         if (request.getDoctorId() != null && request.getDoctorId() > 0) {
             messagingTemplate.convertAndSend("/topic/doctor/" + request.getDoctorId() + "/emergencies", wsPayload);
+            userRepository.findByDoctorId(request.getDoctorId()).ifPresent(u -> {
+                if (!u.getId().equals(request.getDoctorId())) {
+                    messagingTemplate.convertAndSend("/topic/doctor/" + u.getId() + "/emergencies", wsPayload);
+                }
+            });
         }
 
         // Broadcast to ambulance topic

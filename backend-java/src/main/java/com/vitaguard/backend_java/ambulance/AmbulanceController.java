@@ -24,13 +24,23 @@ public class AmbulanceController {
     private final EmergencyRequestRepository emergencyRepository;
     private final UserRepository userRepository;
     private final com.vitaguard.backend_java.user.PatientFamilyRelationshipRepository relationshipRepository;
+    private final com.vitaguard.backend_java.hospital.HospitalRepository hospitalRepository;
 
     public AmbulanceController(AmbulanceService ambulanceService,
                                AmbulanceRepository ambulanceRepository,
                                AmbulanceRequestRepository requestRepository,
                                EmergencyRequestRepository emergencyRepository,
                                UserRepository userRepository) {
-        this(ambulanceService, ambulanceRepository, requestRepository, emergencyRepository, userRepository, null);
+        this(ambulanceService, ambulanceRepository, requestRepository, emergencyRepository, userRepository, null, null);
+    }
+
+    public AmbulanceController(AmbulanceService ambulanceService,
+                               AmbulanceRepository ambulanceRepository,
+                               AmbulanceRequestRepository requestRepository,
+                               EmergencyRequestRepository emergencyRepository,
+                               UserRepository userRepository,
+                               com.vitaguard.backend_java.user.PatientFamilyRelationshipRepository relationshipRepository) {
+        this(ambulanceService, ambulanceRepository, requestRepository, emergencyRepository, userRepository, relationshipRepository, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -39,13 +49,15 @@ public class AmbulanceController {
                                AmbulanceRequestRepository requestRepository,
                                EmergencyRequestRepository emergencyRepository,
                                UserRepository userRepository,
-                               com.vitaguard.backend_java.user.PatientFamilyRelationshipRepository relationshipRepository) {
+                               com.vitaguard.backend_java.user.PatientFamilyRelationshipRepository relationshipRepository,
+                               com.vitaguard.backend_java.hospital.HospitalRepository hospitalRepository) {
         this.ambulanceService = ambulanceService;
         this.ambulanceRepository = ambulanceRepository;
         this.requestRepository = requestRepository;
         this.emergencyRepository = emergencyRepository;
         this.userRepository = userRepository;
         this.relationshipRepository = relationshipRepository;
+        this.hospitalRepository = hospitalRepository;
     }
 
     @GetMapping
@@ -107,7 +119,45 @@ public class AmbulanceController {
         }
 
         List<AmbulanceRequest> requests = ambulanceService.getPendingRequests(driver.getId());
-        return ResponseEntity.ok(requests);
+        List<Map<String, Object>> enriched = requests.stream().map(req -> {
+            Map<String, Object> map = new HashMap<>();
+            map.put("id", req.getId());
+            map.put("requestId", req.getId());
+            map.put("emergencyId", req.getEmergencyId());
+            map.put("ambulanceId", req.getAmbulanceId());
+            map.put("status", req.getStatus());
+            map.put("requestedAt", req.getRequestedAt());
+            map.put("distanceKm", req.getDistanceKm());
+            map.put("etaMinutes", req.getEtaMinutes());
+
+            emergencyRepository.findById(req.getEmergencyId()).ifPresent(e -> {
+                map.put("patientUid", e.getPatientUid());
+                map.put("pickupLat", e.getLatitude());
+                map.put("pickupLng", e.getLongitude());
+                map.put("symptoms", e.getSymptoms());
+                map.put("severity", e.getSeverity());
+                map.put("riskScore", e.getRiskScore());
+                map.put("hospitalId", e.getHospitalId());
+
+                userRepository.findByUid(e.getPatientUid()).ifPresent(p -> {
+                    map.put("patientName", p.getFullName());
+                    map.put("patientAge", p.getAge());
+                    map.put("patientBloodGroup", p.getBloodGroup());
+                    map.put("patientPhone", p.getDoctorPhone());
+                    map.put("patientAddress", p.getAddress());
+                });
+
+                if (e.getHospitalId() != null && hospitalRepository != null) {
+                    hospitalRepository.findById(e.getHospitalId()).ifPresent(h -> {
+                        map.put("destinationHospital", h.getName());
+                        map.put("hospitalName", h.getName());
+                    });
+                }
+            });
+            return map;
+        }).toList();
+
+        return ResponseEntity.ok(enriched);
     }
 
     @PostMapping("/requests/{requestId}/accept")

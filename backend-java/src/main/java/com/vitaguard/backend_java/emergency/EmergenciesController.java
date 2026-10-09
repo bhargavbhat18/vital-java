@@ -356,6 +356,10 @@ public class EmergenciesController {
 
         if (!isAuthorized) return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
 
+        if ("RESOLVED".equalsIgnoreCase(req.getStatus()) || "COMPLETED".equalsIgnoreCase(req.getStatus())) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "Emergency is already resolved"));
+        }
+
         workflowService.resolveEmergency(id);
         return ResponseEntity.ok(Map.of("success", true, "sos_id", id, "status", "resolved"));
     }

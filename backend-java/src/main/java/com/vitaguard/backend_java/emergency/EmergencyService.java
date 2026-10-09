@@ -77,6 +77,18 @@ public class EmergencyService {
         request.setRequiredDepartment(department);
         request.setHospitalId(matchedHospital != null ? matchedHospital.getId() : null);
         request.setStatus("DETECTED");
+
+        // Set triage severity & risk score for patient-triggered emergency
+        String lSymptoms = symptoms != null ? symptoms.toLowerCase() : "";
+        boolean isCritical = lSymptoms.contains("chest pain") || lSymptoms.contains("cardiac") || lSymptoms.contains("heart")
+                || lSymptoms.contains("unconscious") || lSymptoms.contains("stroke") || lSymptoms.contains("accident")
+                || lSymptoms.contains("collapse") || lSymptoms.contains("shock") || lSymptoms.contains("trauma");
+        request.setSeverity(isCritical ? "CRITICAL" : "HIGH");
+        request.setRiskScore(isCritical ? 90 : 75);
+        if (request.getDetectedVitals() == null) {
+            request.setDetectedVitals(isCritical ? "HR: 138 bpm, SpO2: 89%, BP: 145/95" : "HR: 96 bpm, SpO2: 95%, BP: 125/80");
+        }
+
         emergencyRepository.save(request);
 
         // Log DETECTED event
@@ -157,7 +169,7 @@ public class EmergencyService {
             hasHeartHistory = heartHistory.contains("heart") || heartHistory.contains("cardiac") || heartHistory.contains("yes");
         }
 
-        if (lSymptoms.contains("chest pain")) {
+        if (lSymptoms.contains("chest pain") || lSymptoms.contains("chest_pain") || lSymptoms.contains("cardiac")) {
             return hasHeartHistory ? "Cardiology" : "Emergency";
         }
         if (lSymptoms.contains("breathing difficulty") || lSymptoms.contains("breath")) {
@@ -246,12 +258,32 @@ public class EmergencyService {
 
             logEvent(request.getId(), "DOCTOR_ASSIGNED", "Doctor " + doc.getName() + " (" + doc.getSpecialization() + ") assigned.");
         } else {
-            // Assign to general emergency team
-            request.setDoctorId(-1L);
-            request.setStatus("DOCTOR_ASSIGNED");
-            request.setAssignedAt(LocalDateTime.now());
-            emergencyRepository.save(request);
-            logEvent(request.getId(), "DOCTOR_ASSIGNED", "Specialist doctor unavailable. Assigned to emergency duty team.");
+            // Check any doctor on duty and available at the assigned hospital
+            List<Doctor> anyAvailable = doctorRepository.findByHospitalIdAndOnDuty(request.getHospitalId(), true)
+                    .stream()
+                    .filter(Doctor::getAvailableForEmergency)
+                    .toList();
+            if (!anyAvailable.isEmpty()) {
+                Doctor doc = anyAvailable.get(0);
+                doc.setAvailableForEmergency(false);
+                doctorRepository.save(doc);
+                request.setDoctorId(doc.getId());
+                request.setStatus("DOCTOR_ASSIGNED");
+                request.setAssignedAt(LocalDateTime.now());
+                emergencyRepository.save(request);
+                hospitalRepository.findById(request.getHospitalId()).ifPresent(h -> {
+                    h.setAvailableDoctors(Math.max(0, h.getAvailableDoctors() - 1));
+                    hospitalRepository.save(h);
+                });
+                logEvent(request.getId(), "DOCTOR_ASSIGNED", "Doctor " + doc.getName() + " (" + doc.getSpecialization() + ") assigned from available hospital staff.");
+            } else {
+                // Assign to general emergency team
+                request.setDoctorId(-1L);
+                request.setStatus("DOCTOR_ASSIGNED");
+                request.setAssignedAt(LocalDateTime.now());
+                emergencyRepository.save(request);
+                logEvent(request.getId(), "DOCTOR_ASSIGNED", "Specialist doctor unavailable. Assigned to emergency duty team.");
+            }
         }
         broadcastWorkflowUpdate(request, "DOCTOR_ASSIGNED");
     }
@@ -264,7 +296,11 @@ public class EmergencyService {
         broadcastWorkflowUpdate(request, "AMBULANCE_REQUESTED");
 
         if (ambulanceService != null) {
-            ambulanceService.requestNearestAmbulance(request);
+            com.vitaguard.backend_java.ambulance.AmbulanceRequest ambReq = ambulanceService.requestNearestAmbulance(request);
+            if (ambReq != null && ambReq.getAmbulanceId() != null) {
+                request.setAmbulanceId(ambReq.getAmbulanceId());
+                emergencyRepository.save(request);
+            }
         }
     }
 
@@ -450,8 +486,9 @@ public class EmergencyService {
         // Broadcast to emergency-specific topic
         messagingTemplate.convertAndSend("/topic/emergency/" + request.getId(), wsPayload);
 
-        // Broadcast to general emergency updates
+        // Broadcast to general emergency updates and hospital queue refresh
         messagingTemplate.convertAndSend("/topic/emergency-updates", wsPayload);
+        messagingTemplate.convertAndSend("/topic/hospital-queue-refresh", "refresh");
 
         // Broadcast to hospital topic
         if (request.getHospitalId() != null) {
@@ -461,6 +498,11 @@ public class EmergencyService {
         // Broadcast to doctor topic
         if (request.getDoctorId() != null && request.getDoctorId() > 0) {
             messagingTemplate.convertAndSend("/topic/doctor/" + request.getDoctorId() + "/emergencies", wsPayload);
+            userRepository.findByDoctorId(request.getDoctorId()).ifPresent(u -> {
+                if (!u.getId().equals(request.getDoctorId())) {
+                    messagingTemplate.convertAndSend("/topic/doctor/" + u.getId() + "/emergencies", wsPayload);
+                }
+            });
         }
 
         // Broadcast to ambulance topic

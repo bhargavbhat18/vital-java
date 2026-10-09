@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import com.vitaguard.backend_java.emergency.EmergencyWorkflowService;
+
 @RestController
 @RequestMapping("/api/hospital")
 public class HospitalController {
@@ -28,6 +30,7 @@ public class HospitalController {
     private final EmergencyRequestRepository emergencyRepository;
     private final UserRepository userRepository;
     private final AmbulanceRepository ambulanceRepository;
+    private final EmergencyWorkflowService workflowService;
 
     public HospitalController(
             HospitalRepository hospitalRepository,
@@ -37,12 +40,26 @@ public class HospitalController {
             UserRepository userRepository,
             AmbulanceRepository ambulanceRepository
     ) {
+        this(hospitalRepository, departmentRepository, doctorRepository, emergencyRepository, userRepository, ambulanceRepository, null);
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public HospitalController(
+            HospitalRepository hospitalRepository,
+            HospitalDepartmentRepository departmentRepository,
+            DoctorRepository doctorRepository,
+            EmergencyRequestRepository emergencyRepository,
+            UserRepository userRepository,
+            AmbulanceRepository ambulanceRepository,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) EmergencyWorkflowService workflowService
+    ) {
         this.hospitalRepository = hospitalRepository;
         this.departmentRepository = departmentRepository;
         this.doctorRepository = doctorRepository;
         this.emergencyRepository = emergencyRepository;
         this.userRepository = userRepository;
         this.ambulanceRepository = ambulanceRepository;
+        this.workflowService = workflowService;
     }
 
     @GetMapping
@@ -55,8 +72,14 @@ public class HospitalController {
         String adminUid = SecurityContextHolder.getContext().getAuthentication().getName();
         User admin = userRepository.findByUid(adminUid).orElse(null);
 
-        if (admin == null || !"HOSPITAL_ADMIN".equals(admin.getRole())) {
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only hospital admins can access this endpoint"));
+        if (admin == null || (!"HOSPITAL_ADMIN".equals(admin.getRole()) && !"DOCTOR".equals(admin.getRole()))) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only hospital admins and doctors can access this endpoint"));
+        }
+
+        if ("DOCTOR".equals(admin.getRole())) {
+            Long docProfileId = admin.getDoctorId() != null ? admin.getDoctorId() : admin.getId();
+            List<EmergencyRequest> emergencies = emergencyRepository.findByDoctorId(docProfileId);
+            return ResponseEntity.ok(enrichEmergencies(emergencies));
         }
 
         if (admin.getHospitalId() == null) {
@@ -83,7 +106,7 @@ public class HospitalController {
 
         // Return emergencies that are incoming (not yet resolved) for THIS hospital
         List<EmergencyRequest> emergencies = emergencyRepository.findByHospitalIdAndStatusIn(admin.getHospitalId(), List.of(
-                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
+                "HOSPITAL_ASSIGNED", "HOSPITAL_ACCEPTED", "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
                 "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
                 "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL", "AMBULANCE_NOT_REQUIRED"
         ));
@@ -112,7 +135,7 @@ public class HospitalController {
         stats.put("hospital", hospital);
         stats.put("total_emergencies", emergencyRepository.countByHospitalId(admin.getHospitalId()));
         stats.put("active_emergencies", emergencyRepository.findByHospitalIdAndStatusIn(admin.getHospitalId(), List.of(
-                "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
+                "HOSPITAL_ASSIGNED", "HOSPITAL_ACCEPTED", "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
                 "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
                 "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL", "AMBULANCE_NOT_REQUIRED"
         )).size());
@@ -142,33 +165,42 @@ public class HospitalController {
                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Cannot resolve emergency from another hospital"));
             }
 
-            req.setStatus("RESOLVED");
-            req.setCompletedAt(java.time.LocalDateTime.now());
-            emergencyRepository.save(req);
-
-            // Re-increment beds/doctors
-            Hospital hospital = hospitalRepository.findById(req.getHospitalId()).orElse(null);
-            if (hospital != null) {
-                hospital.setAvailableBeds(Math.min(hospital.getTotalBeds(), hospital.getAvailableBeds() + 1));
-                hospital.setAvailableDoctors(Math.min(hospital.getTotalDoctors(), hospital.getAvailableDoctors() + 1));
-                hospitalRepository.save(hospital);
+            // Reject duplicate resolution attempts
+            if ("RESOLVED".equalsIgnoreCase(req.getStatus()) || "COMPLETED".equalsIgnoreCase(req.getStatus())) {
+                return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "Emergency is already resolved"));
             }
 
-            // Release doctor
-            if (req.getDoctorId() != null && req.getDoctorId() > 0) {
-                doctorRepository.findById(req.getDoctorId()).ifPresent(doc -> {
-                    doc.setAvailableForEmergency(true);
-                    doctorRepository.save(doc);
-                });
-            }
+            if (workflowService != null) {
+                workflowService.resolveEmergency(id);
+            } else {
+                req.setStatus("RESOLVED");
+                req.setCompletedAt(java.time.LocalDateTime.now());
+                emergencyRepository.save(req);
 
-            // Release ambulance
-            if (req.getAmbulanceId() != null) {
-                ambulanceRepository.findById(req.getAmbulanceId()).ifPresent(amb -> {
-                    amb.setStatus("AVAILABLE");
-                    amb.setCurrentEmergencyId(null);
-                    ambulanceRepository.save(amb);
-                });
+                // Re-increment beds/doctors
+                Hospital hospital = hospitalRepository.findById(req.getHospitalId()).orElse(null);
+                if (hospital != null) {
+                    hospital.setAvailableBeds(Math.min(hospital.getTotalBeds(), hospital.getAvailableBeds() + 1));
+                    hospital.setAvailableDoctors(Math.min(hospital.getTotalDoctors(), hospital.getAvailableDoctors() + 1));
+                    hospitalRepository.save(hospital);
+                }
+
+                // Release doctor
+                if (req.getDoctorId() != null && req.getDoctorId() > 0) {
+                    doctorRepository.findById(req.getDoctorId()).ifPresent(doc -> {
+                        doc.setAvailableForEmergency(true);
+                        doctorRepository.save(doc);
+                    });
+                }
+
+                // Release ambulance
+                if (req.getAmbulanceId() != null) {
+                    ambulanceRepository.findById(req.getAmbulanceId()).ifPresent(amb -> {
+                        amb.setStatus("AVAILABLE");
+                        amb.setCurrentEmergencyId(null);
+                        ambulanceRepository.save(amb);
+                    });
+                }
             }
 
             Map<String, Object> res = new HashMap<>();
@@ -304,8 +336,16 @@ public class HospitalController {
         }
 
         // Ambulance info
-        if (request.getAmbulanceId() != null) {
-            ambulanceRepository.findById(request.getAmbulanceId()).ifPresent(a -> {
+        Long ambId = request.getAmbulanceId();
+        if (ambId == null) {
+            Optional<Ambulance> ambOpt = ambulanceRepository.findByCurrentEmergencyId(request.getId());
+            if (ambOpt.isPresent()) {
+                ambId = ambOpt.get().getId();
+                enriched.put("ambulanceId", ambId);
+            }
+        }
+        if (ambId != null) {
+            ambulanceRepository.findById(ambId).ifPresent(a -> {
                 enriched.put("ambulanceUnitId", a.getUnitId());
                 enriched.put("ambulanceStatus", a.getStatus());
                 if (a.getDriver() != null) {
@@ -318,6 +358,9 @@ public class HospitalController {
         userRepository.findByUid(request.getPatientUid()).ifPresent(p -> {
             enriched.put("patientName", p.getFullName());
             enriched.put("patientAge", p.getAge());
+            enriched.put("patientBloodGroup", p.getBloodGroup());
+            enriched.put("patientPhone", p.getDoctorPhone());
+            enriched.put("patientAddress", p.getAddress());
         });
 
         return enriched;

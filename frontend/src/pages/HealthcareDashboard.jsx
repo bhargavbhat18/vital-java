@@ -41,10 +41,15 @@ const HealthcareDashboard = () => {
     revision,
     refresh,
     ambulanceLocation
-  } = useRealtimeRefresh(user?.uid, selectedEmergencyId, selectedPatientUid);
+  } = useRealtimeRefresh(user?.uid, selectedEmergencyId, selectedPatientUid, user);
 
-  // Emergencies queue
-  const { data: queue } = useApiResource(user ? '/hospital/emergencies' : null, revision);
+  // Emergencies queue based on role
+  const queueEndpoint = !user ? null :
+    role === 'DOCTOR' ? '/doctor/emergencies' :
+    role === 'HOSPITAL_ADMIN' ? '/hospital/emergencies' :
+    role === 'AMBULANCE_DRIVER' ? '/emergency/active' :
+    '/emergency/active';
+  const { data: queue } = useApiResource(queueEndpoint, revision);
   const emergencies = Array.isArray(queue) ? queue : [];
   const activeEmergencies = emergencies.filter(isActiveEmergency);
   const selectedEmergency = emergencies.find(e => e.id === selectedEmergencyId) || null;
@@ -68,8 +73,9 @@ const HealthcareDashboard = () => {
       localStorage.setItem('userRole', role || '');
       if (role === 'HOSPITAL_ADMIN' && user.hospitalId) {
         localStorage.setItem('hospitalId', user.hospitalId.toString());
-      } else if (role === 'DOCTOR' && user.id) {
-        localStorage.setItem('doctorId', user.id.toString());
+      } else if (role === 'DOCTOR') {
+        const docId = user.doctorId || user.id;
+        if (docId) localStorage.setItem('doctorId', docId.toString());
       } else if (role === 'AMBULANCE_DRIVER') {
         if (user.ambulanceId) localStorage.setItem('ambulanceId', user.ambulanceId.toString());
         if (user.id) localStorage.setItem('userId', user.id.toString());
@@ -209,6 +215,7 @@ const HealthcareDashboard = () => {
     try {
       await API.post(`/ambulance/requests/${requestId}/accept`);
       loadDriverData();
+      refresh();
     } catch (err) {
       alert('Failed to accept: ' + (err.response?.data?.error || err.message));
     }
@@ -218,6 +225,7 @@ const HealthcareDashboard = () => {
     try {
       await API.post(`/ambulance/requests/${requestId}/decline`);
       loadDriverData();
+      refresh();
     } catch (err) {
       alert('Failed to decline request: ' + (err.response?.data?.error || err.message));
     }
@@ -227,6 +235,7 @@ const HealthcareDashboard = () => {
     try {
       await API.post('/ambulance/status', { status });
       loadDriverData();
+      refresh();
     } catch (err) {
       alert('Failed to update ambulance status: ' + (err.response?.data?.error || err.message));
     }
@@ -635,7 +644,11 @@ const HealthcareDashboard = () => {
   // 2. DOCTOR DASHBOARD VIEW (Sections 10, 11)
   // ==========================================================================
   const renderDoctorView = () => {
-    const assignedEmergencies = emergencies.filter(e => e.doctorId === user?.id || e.doctorName === user?.fullName || isActiveEmergency(e));
+    const assignedEmergencies = emergencies.filter(e =>
+      (user?.doctorId && e.doctorId === user.doctorId) ||
+      (user?.id && e.doctorId === user.id) ||
+      (user?.fullName && e.doctorName === user.fullName)
+    );
     const activeDoctorIncident = selectedEmergency || assignedEmergencies[0] || null;
 
     return (
@@ -726,11 +739,11 @@ const HealthcareDashboard = () => {
                       </div>
 
                       <div style={{ fontSize: '11px', color: 'var(--color-critical)', marginTop: '2px' }}>
-                        {eq.detectedVitals || 'HR 145 BPM, SpO2 82%'}
+                        {eq.detectedVitals || 'Vitals telemetry pending'}
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '8px', fontSize: '11px', color: 'var(--color-gray-500)' }}>
-                        <span>Risk: <strong>{eq.riskScore || 92}/100</strong></span>
+                        <span>Risk: <strong>{eq.riskScore != null ? eq.riskScore : 'N/A'}/100</strong></span>
                         <button
                           onClick={(e) => {
                             e.stopPropagation();
@@ -851,7 +864,7 @@ const HealthcareDashboard = () => {
   // 3. AMBULANCE DRIVER VIEW (Sections 12, 13)
   // ==========================================================================
   const renderDriverView = () => {
-    const activeEmergency = currentJob?.emergency || activeEmergencies[0] || null;
+    const activeEmergency = currentJob?.emergency || activeEmergencies.find(e => (user?.ambulanceId && e.ambulanceId === user.ambulanceId)) || null;
 
     return (
       <div style={{ maxWidth: '960px', margin: '0 auto' }}>
@@ -907,7 +920,7 @@ const HealthcareDashboard = () => {
                 <StatusBadge status="CRITICAL" size="sm" />
               </div>
               <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--color-critical)' }}>
-                RISK: {req.riskScore || 92}/100
+                RISK: {req.riskScore != null ? req.riskScore : 'N/A'}/100
               </span>
             </div>
 

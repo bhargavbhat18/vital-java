@@ -38,6 +38,7 @@ public class EmergencyController {
     private final PatientFamilyRelationshipRepository relationshipRepository;
     private final EmergencyEventRepository eventRepository;
     private final AmbulanceRequestRepository ambulanceRequestRepository;
+    private final EmergencyWorkflowService workflowService;
 
     public EmergencyController(
             EmergencyService emergencyService,
@@ -47,7 +48,7 @@ public class EmergencyController {
             AmbulanceRepository ambulanceRepository,
             UserRepository userRepository
     ) {
-        this(emergencyService, emergencyRepository, hospitalRepository, doctorRepository, ambulanceRepository, userRepository, null, null, null);
+        this(emergencyService, emergencyRepository, hospitalRepository, doctorRepository, ambulanceRepository, userRepository, null, null, null, null);
     }
 
     public EmergencyController(
@@ -60,7 +61,21 @@ public class EmergencyController {
             PatientFamilyRelationshipRepository relationshipRepository,
             EmergencyEventRepository eventRepository
     ) {
-        this(emergencyService, emergencyRepository, hospitalRepository, doctorRepository, ambulanceRepository, userRepository, relationshipRepository, eventRepository, null);
+        this(emergencyService, emergencyRepository, hospitalRepository, doctorRepository, ambulanceRepository, userRepository, relationshipRepository, eventRepository, null, null);
+    }
+
+    public EmergencyController(
+            EmergencyService emergencyService,
+            EmergencyRequestRepository emergencyRepository,
+            HospitalRepository hospitalRepository,
+            DoctorRepository doctorRepository,
+            AmbulanceRepository ambulanceRepository,
+            UserRepository userRepository,
+            PatientFamilyRelationshipRepository relationshipRepository,
+            EmergencyEventRepository eventRepository,
+            AmbulanceRequestRepository ambulanceRequestRepository
+    ) {
+        this(emergencyService, emergencyRepository, hospitalRepository, doctorRepository, ambulanceRepository, userRepository, relationshipRepository, eventRepository, ambulanceRequestRepository, null);
     }
 
     @org.springframework.beans.factory.annotation.Autowired
@@ -73,7 +88,8 @@ public class EmergencyController {
             UserRepository userRepository,
             PatientFamilyRelationshipRepository relationshipRepository,
             EmergencyEventRepository eventRepository,
-            AmbulanceRequestRepository ambulanceRequestRepository
+            @org.springframework.beans.factory.annotation.Autowired(required = false) AmbulanceRequestRepository ambulanceRequestRepository,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) EmergencyWorkflowService workflowService
     ) {
         this.emergencyService = emergencyService;
         this.emergencyRepository = emergencyRepository;
@@ -84,6 +100,7 @@ public class EmergencyController {
         this.relationshipRepository = relationshipRepository;
         this.eventRepository = eventRepository;
         this.ambulanceRequestRepository = ambulanceRequestRepository;
+        this.workflowService = workflowService;
     }
 
     @PostMapping("/sos")
@@ -107,10 +124,10 @@ public class EmergencyController {
 
         // Check for duplicate active emergency
         List<EmergencyRequest> activeEmergencies = emergencyRepository.findByPatientUidAndStatusIn(patientUid, List.of(
-                "CREATED", "SEARCHING_HOSPITAL", "DETECTED", "HOSPITAL_ASSIGNED", "DOCTOR_ASSIGNED",
+                "CREATED", "SEARCHING_HOSPITAL", "DETECTED", "HOSPITAL_ASSIGNED", "ACCEPTED", "HOSPITAL_ACCEPTED", "DOCTOR_ASSIGNED",
                 "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED", "AMBULANCE_DISPATCHED",
                 "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP", "EN_ROUTE_TO_HOSPITAL",
-                "ARRIVED_AT_HOSPITAL"
+                "ARRIVED_AT_HOSPITAL", "AMBULANCE_NOT_REQUIRED"
         ));
         if (!activeEmergencies.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "Active emergency already exists for this patient"));
@@ -170,8 +187,15 @@ public class EmergencyController {
             }
         } else if ("AMBULANCE_DRIVER".equals(role)) {
             // Ambulance driver can access emergencies assigned to their ambulance
-            if (request.getAmbulanceId() != null && requester.getAmbulanceId() != null) {
-                isAuthorized = requester.getAmbulanceId().equals(request.getAmbulanceId());
+            Long ambId = request.getAmbulanceId();
+            if (ambId == null) {
+                Optional<Ambulance> ambOpt = ambulanceRepository.findByCurrentEmergencyId(request.getId());
+                if (ambOpt.isPresent()) {
+                    ambId = ambOpt.get().getId();
+                }
+            }
+            if (ambId != null && requester.getAmbulanceId() != null) {
+                isAuthorized = requester.getAmbulanceId().equals(ambId);
             }
         } else if ("SYSTEM_ADMIN".equals(role)) {
             isAuthorized = true;
@@ -248,10 +272,10 @@ public class EmergencyController {
         }
 
         List<EmergencyRequest> allActive = emergencyRepository.findByStatusIn(List.of(
-                "CREATED", "SEARCHING_HOSPITAL", "DETECTED", "HOSPITAL_ASSIGNED", "ACCEPTED",
+                "CREATED", "SEARCHING_HOSPITAL", "DETECTED", "HOSPITAL_ASSIGNED", "ACCEPTED", "HOSPITAL_ACCEPTED",
                 "DOCTOR_ASSIGNED", "FAMILY_NOTIFIED", "AMBULANCE_REQUESTED", "AMBULANCE_ACCEPTED",
                 "AMBULANCE_DISPATCHED", "EN_ROUTE_TO_PATIENT", "ARRIVED_AT_PATIENT", "PATIENT_PICKED_UP",
-                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL"
+                "EN_ROUTE_TO_HOSPITAL", "ARRIVED_AT_HOSPITAL", "AMBULANCE_NOT_REQUIRED"
         ));
 
         // Filter based on role
@@ -293,9 +317,14 @@ public class EmergencyController {
         } else if ("AMBULANCE_DRIVER".equals(role)) {
             // Get ambulances assigned to this driver
             filtered = allActive.stream()
-                    .filter(e -> e.getAmbulanceId() != null)
                     .filter(e -> {
-                        Optional<Ambulance> ambOpt = ambulanceRepository.findById(e.getAmbulanceId());
+                        Long ambId = e.getAmbulanceId();
+                        if (ambId == null) {
+                            Optional<Ambulance> ambOpt = ambulanceRepository.findByCurrentEmergencyId(e.getId());
+                            if (ambOpt.isPresent()) ambId = ambOpt.get().getId();
+                        }
+                        if (ambId == null) return false;
+                        Optional<Ambulance> ambOpt = ambulanceRepository.findById(ambId);
                         return ambOpt.isPresent() && ambOpt.get().getDriver() != null
                                 && ambOpt.get().getDriver().getId().equals(requester.getId());
                     })
@@ -399,17 +428,25 @@ public class EmergencyController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Unauthorized to resolve this emergency"));
         }
 
-        request.setStatus("RESOLVED");
-        request.setCompletedAt(java.time.LocalDateTime.now());
-        emergencyRepository.save(request);
-
-        // Update hospital resources if needed
-        Hospital hospital = hospitalRepository.findById(request.getHospitalId()).orElse(null);
-        if (hospital != null) {
-            hospital.setAvailableBeds(Math.min(hospital.getTotalBeds(), hospital.getAvailableBeds() + 1));
-            hospital.setAvailableDoctors(Math.min(hospital.getTotalDoctors(), hospital.getAvailableDoctors() + 1));
-            hospitalRepository.save(hospital);
+        // Reject duplicate resolution attempts
+        if ("RESOLVED".equalsIgnoreCase(request.getStatus()) || "COMPLETED".equalsIgnoreCase(request.getStatus())) {
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(Map.of("error", "Emergency is already resolved"));
         }
+
+        if (workflowService != null) {
+            workflowService.resolveEmergency(id);
+        } else {
+            request.setStatus("RESOLVED");
+            request.setCompletedAt(java.time.LocalDateTime.now());
+            emergencyRepository.save(request);
+
+            // Update hospital resources if needed
+            Hospital hospital = hospitalRepository.findById(request.getHospitalId()).orElse(null);
+            if (hospital != null) {
+                hospital.setAvailableBeds(Math.min(hospital.getTotalBeds(), hospital.getAvailableBeds() + 1));
+                hospital.setAvailableDoctors(Math.min(hospital.getTotalDoctors(), hospital.getAvailableDoctors() + 1));
+                hospitalRepository.save(hospital);
+            }
 
         // Release doctor
         if (request.getDoctorId() != null && request.getDoctorId() > 0) {
@@ -435,11 +472,16 @@ public class EmergencyController {
             }
         }
 
-        // Complete any pending/accepted ambulance requests for this emergency
-        if (ambulanceRequestRepository != null) {
-            for (AmbulanceRequest ar : ambulanceRequestRepository.findByEmergencyIdAndStatusIn(id, List.of("PENDING", "ACCEPTED"))) {
-                ar.setStatus("COMPLETED");
-                ambulanceRequestRepository.save(ar);
+            // Complete any pending/accepted ambulance requests for this emergency
+            if (ambulanceRequestRepository != null) {
+                for (AmbulanceRequest ar : ambulanceRequestRepository.findByEmergencyIdAndStatusIn(id, List.of("PENDING", "ACCEPTED"))) {
+                    ar.setStatus("COMPLETED");
+                    ambulanceRequestRepository.save(ar);
+                }
+            }
+
+            if (eventRepository != null) {
+                eventRepository.save(new EmergencyEvent(id, "RESOLVED", "Emergency resolved successfully. Resources released."));
             }
         }
 
@@ -580,8 +622,16 @@ public class EmergencyController {
         }
 
         // Enrich with ambulance info
-        if (request.getAmbulanceId() != null) {
-            ambulanceRepository.findById(request.getAmbulanceId()).ifPresent(a -> {
+        Long ambId = request.getAmbulanceId();
+        if (ambId == null) {
+            Optional<Ambulance> ambOpt = ambulanceRepository.findByCurrentEmergencyId(request.getId());
+            if (ambOpt.isPresent()) {
+                ambId = ambOpt.get().getId();
+                enriched.put("ambulanceId", ambId);
+            }
+        }
+        if (ambId != null) {
+            ambulanceRepository.findById(ambId).ifPresent(a -> {
                 enriched.put("ambulanceUnitId", a.getUnitId());
                 enriched.put("ambulanceStatus", a.getStatus());
                 enriched.put("ambulanceLatitude", a.getLatitude());
@@ -620,8 +670,13 @@ public class EmergencyController {
         } else if ("HOSPITAL_ADMIN".equals(role)) {
             return requester.getHospitalId() != null && requester.getHospitalId().equals(request.getHospitalId());
         } else if ("AMBULANCE_DRIVER".equals(role)) {
-            return request.getAmbulanceId() != null && requester.getAmbulanceId() != null
-                    && requester.getAmbulanceId().equals(request.getAmbulanceId());
+            Long ambId = request.getAmbulanceId();
+            if (ambId == null) {
+                Optional<Ambulance> ambOpt = ambulanceRepository.findByCurrentEmergencyId(request.getId());
+                if (ambOpt.isPresent()) ambId = ambOpt.get().getId();
+            }
+            return ambId != null && requester.getAmbulanceId() != null
+                    && requester.getAmbulanceId().equals(ambId);
         } else if ("SYSTEM_ADMIN".equals(role)) {
             return true;
         }
