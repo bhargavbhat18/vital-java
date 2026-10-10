@@ -220,6 +220,33 @@ public class AdminController {
         return ResponseEntity.ok(pendingUsers.stream().map(this::toUserSummary).collect(Collectors.toList()));
     }
 
+    @GetMapping("/registration-requests")
+    public ResponseEntity<?> getRegistrationRequests(
+            @RequestParam(required = false) String role,
+            @RequestParam(required = false) String status
+    ) {
+        ResponseEntity<?> authCheck = checkSystemAdmin();
+        if (authCheck != null) return authCheck;
+
+        List<User> users;
+        if (status != null && !status.trim().isEmpty() && !"ALL".equalsIgnoreCase(status)) {
+            users = userRepository.findByStatus(status.trim().toUpperCase());
+        } else {
+            users = userRepository.findAll();
+        }
+
+        // Filter by role if requested
+        if (role != null && !role.trim().isEmpty() && !"ALL".equalsIgnoreCase(role)) {
+            String targetRole = role.trim().toUpperCase();
+            users = users.stream().filter(u -> targetRole.equalsIgnoreCase(u.getRole())).collect(Collectors.toList());
+        } else {
+            // By default for registration requests, show applicant roles
+            users = users.stream().filter(u -> List.of("DOCTOR", "HOSPITAL_ADMIN", "AMBULANCE_DRIVER").contains(u.getRole())).collect(Collectors.toList());
+        }
+
+        return ResponseEntity.ok(users.stream().map(this::toUserSummary).collect(Collectors.toList()));
+    }
+
     @PostMapping("/users/{id}/approve")
     public ResponseEntity<?> approveUser(@PathVariable Long id) {
         ResponseEntity<?> authCheck = checkSystemAdmin();
@@ -233,10 +260,100 @@ public class AdminController {
         User user = userOpt.get();
         String oldStatus = user.getStatus();
         user.setStatus("ACTIVE");
+        user.setReviewedAt(java.time.LocalDateTime.now());
+        User currentUser = getCurrentUser();
+        user.setReviewedBy(currentUser != null ? currentUser.getUid() : "SYS_ADMIN");
+
+        // Role-specific entity creation & association
+        if ("DOCTOR".equals(user.getRole())) {
+            Hospital hospital = null;
+            if (user.getHospitalId() != null) {
+                hospital = hospitalRepository.findById(user.getHospitalId()).orElse(null);
+            }
+            if (hospital == null && user.getHospitalAffiliation() != null && !user.getHospitalAffiliation().trim().isEmpty()) {
+                String aff = user.getHospitalAffiliation().trim();
+                hospital = hospitalRepository.findAll().stream()
+                        .filter(h -> h.getName().equalsIgnoreCase(aff))
+                        .findFirst()
+                        .orElseGet(() -> hospitalRepository.save(new Hospital(aff, 12.934, 77.61, 50, 50, 10, 10, 4.5)));
+            }
+            if (hospital == null) {
+                hospital = hospitalRepository.findAll().stream().findFirst().orElseGet(() -> hospitalRepository.save(new Hospital("Apollo Hospital", 12.934, 77.61, 50, 50, 10, 10, 4.5)));
+            }
+            user.setHospitalId(hospital.getId());
+
+            final Hospital docHospital = hospital;
+            Doctor doctor = null;
+            if (user.getDoctorId() != null) {
+                doctor = doctorRepository.findById(user.getDoctorId()).orElse(null);
+            }
+            if (doctor == null) {
+                doctor = doctorRepository.findByHospitalId(docHospital.getId()).stream()
+                        .filter(d -> d.getName().equalsIgnoreCase(user.getFullName()) || (d.getPhone() != null && d.getPhone().equals(user.getPhone())))
+                        .findFirst()
+                        .orElse(null);
+            }
+            if (doctor == null) {
+                String spec = user.getSpecialization() != null ? user.getSpecialization() : "Emergency Medicine";
+                doctor = new Doctor(docHospital, user.getFullName(), user.getPhone(), spec, spec, true, true);
+                doctor = doctorRepository.save(doctor);
+            }
+            user.setDoctorId(doctor.getId());
+        } else if ("HOSPITAL_ADMIN".equals(user.getRole())) {
+            Hospital hospital = null;
+            if (user.getHospitalId() != null) {
+                hospital = hospitalRepository.findById(user.getHospitalId()).orElse(null);
+            }
+            if (hospital == null && user.getHospitalAffiliation() != null && !user.getHospitalAffiliation().trim().isEmpty()) {
+                String aff = user.getHospitalAffiliation().trim();
+                hospital = hospitalRepository.findAll().stream()
+                        .filter(h -> h.getName().equalsIgnoreCase(aff))
+                        .findFirst()
+                        .orElseGet(() -> hospitalRepository.save(new Hospital(aff, 12.928, 77.60, 50, 50, 10, 10, 4.5)));
+            }
+            if (hospital == null) {
+                hospital = hospitalRepository.findAll().stream().findFirst().orElseGet(() -> hospitalRepository.save(new Hospital("Apollo Hospital", 12.928, 77.60, 50, 50, 10, 10, 4.5)));
+            }
+            user.setHospitalId(hospital.getId());
+        } else if ("AMBULANCE_DRIVER".equals(user.getRole())) {
+            Ambulance ambulance = null;
+            if (user.getAmbulanceId() != null) {
+                ambulance = ambulanceRepository.findById(user.getAmbulanceId()).orElse(null);
+            }
+            if (ambulance == null && user.getVehicleNumber() != null && !user.getVehicleNumber().trim().isEmpty()) {
+                String vNum = user.getVehicleNumber().trim();
+                ambulance = ambulanceRepository.findAll().stream()
+                        .filter(a -> a.getUnitId().equalsIgnoreCase(vNum))
+                        .findFirst()
+                        .orElse(null);
+            }
+            if (ambulance == null) {
+                String unitId = user.getVehicleNumber() != null && !user.getVehicleNumber().trim().isEmpty()
+                        ? user.getVehicleNumber().trim()
+                        : "AMB-" + String.format("%02d", ambulanceRepository.count() + 1);
+                String org = user.getOrganization() != null && !user.getOrganization().trim().isEmpty()
+                        ? user.getOrganization().trim()
+                        : (user.getHospitalAffiliation() != null ? user.getHospitalAffiliation() : "Apollo Hospital");
+                ambulance = new Ambulance(unitId, org, 12.9252, 77.6011);
+            }
+            ambulance.setDriver(user);
+            ambulance = ambulanceRepository.save(ambulance);
+            user.setAmbulanceId(ambulance.getId());
+
+            if (user.getHospitalId() == null) {
+                String org = user.getOrganization() != null ? user.getOrganization() : user.getHospitalAffiliation();
+                if (org != null) {
+                    hospitalRepository.findAll().stream()
+                            .filter(h -> h.getName().equalsIgnoreCase(org))
+                            .findFirst()
+                            .ifPresent(h -> user.setHospitalId(h.getId()));
+                }
+            }
+        }
+
         userRepository.save(user);
 
         if (auditLogService != null) {
-            User currentUser = getCurrentUser();
             auditLogService.logAction(
                     currentUser != null ? currentUser.getUid() : "SYS_ADMIN",
                     currentUser != null ? currentUser.getFullName() : "System Administrator",
@@ -258,7 +375,7 @@ public class AdminController {
     }
 
     @PostMapping("/users/{id}/reject")
-    public ResponseEntity<?> rejectUser(@PathVariable Long id) {
+    public ResponseEntity<?> rejectUser(@PathVariable Long id, @RequestBody(required = false) Map<String, String> body) {
         ResponseEntity<?> authCheck = checkSystemAdmin();
         if (authCheck != null) return authCheck;
 
@@ -270,10 +387,22 @@ public class AdminController {
         User user = userOpt.get();
         String oldStatus = user.getStatus();
         user.setStatus("REJECTED");
+        
+        String reason = null;
+        if (body != null) {
+            reason = body.get("rejectionReason") != null ? body.get("rejectionReason") : body.get("reason");
+        }
+        if (reason == null || reason.trim().isEmpty()) {
+            reason = "Application requirements not verified";
+        }
+        user.setRejectionReason(reason.trim());
+        user.setReviewedAt(java.time.LocalDateTime.now());
+        User currentUser = getCurrentUser();
+        user.setReviewedBy(currentUser != null ? currentUser.getUid() : "SYS_ADMIN");
+
         userRepository.save(user);
 
         if (auditLogService != null) {
-            User currentUser = getCurrentUser();
             auditLogService.logAction(
                     currentUser != null ? currentUser.getUid() : "SYS_ADMIN",
                     currentUser != null ? currentUser.getFullName() : "System Administrator",
@@ -283,7 +412,7 @@ public class AdminController {
                     user.getRole(),
                     oldStatus,
                     "REJECTED",
-                    "Rejected account registration for " + user.getFullName()
+                    "Rejected account registration for " + user.getFullName() + ". Reason: " + reason
             );
         }
 
@@ -1017,6 +1146,28 @@ public class AdminController {
         map.put("hospitalId", u.getHospitalId());
         map.put("ambulanceId", u.getAmbulanceId());
         map.put("doctorId", u.getDoctorId());
+        
+        // Applicant details
+        map.put("medicalLicense", u.getMedicalLicense());
+        map.put("specialization", u.getSpecialization());
+        map.put("hospitalAffiliation", u.getHospitalAffiliation() != null ? u.getHospitalAffiliation() : u.getDoctorHospital());
+        map.put("hospitalAddress", u.getHospitalAddress() != null ? u.getHospitalAddress() : u.getAddress());
+        map.put("hospitalRegistrationNumber", u.getHospitalRegistrationNumber());
+        map.put("drivingLicense", u.getDrivingLicense());
+        map.put("vehicleNumber", u.getVehicleNumber());
+        map.put("organization", u.getOrganization() != null ? u.getOrganization() : u.getHospitalAffiliation());
+        map.put("rejectionReason", u.getRejectionReason());
+        map.put("registeredAt", u.getRegisteredAt());
+        map.put("reviewedAt", u.getReviewedAt());
+        map.put("reviewedBy", u.getReviewedBy());
+
+        // Resolve hospital name if hospitalId is set
+        if (u.getHospitalId() != null) {
+            hospitalRepository.findById(u.getHospitalId()).ifPresent(h -> map.put("hospitalName", h.getName()));
+        } else if (u.getHospitalAffiliation() != null) {
+            map.put("hospitalName", u.getHospitalAffiliation());
+        }
+
         return map;
     }
 

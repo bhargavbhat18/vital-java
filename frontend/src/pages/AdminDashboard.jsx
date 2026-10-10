@@ -34,6 +34,13 @@ export default function AdminDashboard({ defaultTab }) {
   const [ambulances, setAmbulances] = useState([]);
   const [users, setUsers] = useState([]);
   const [pendingApprovals, setPendingApprovals] = useState([]);
+  const [registrationRequests, setRegistrationRequests] = useState([]);
+  const [regRoleFilter, setRegRoleFilter] = useState('ALL');
+  const [regStatusFilter, setRegStatusFilter] = useState('ALL');
+  const [regSearchTerm, setRegSearchTerm] = useState('');
+  const [rejectModalItem, setRejectModalItem] = useState(null);
+  const [rejectionReasonInput, setRejectionReasonInput] = useState('');
+  const [viewApplicantModalItem, setViewApplicantModalItem] = useState(null);
   const [emergencies, setEmergencies] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [setupSuccessModal, setSetupSuccessModal] = useState(null);
@@ -84,7 +91,8 @@ export default function AdminDashboard({ defaultTab }) {
         usersRes,
         pendingRes,
         emergenciesRes,
-        auditLogsRes
+        auditLogsRes,
+        regRequestsRes
       ] = await Promise.all([
         API.get('/admin/stats').catch(() => ({ data: {} })),
         API.get('/admin/doctors').catch(() => ({ data: [] })),
@@ -95,7 +103,8 @@ export default function AdminDashboard({ defaultTab }) {
         API.get('/admin/users').catch(() => ({ data: [] })),
         API.get('/admin/pending-approvals').catch(() => ({ data: [] })),
         API.get('/admin/emergencies/active').catch(() => ({ data: [] })),
-        API.get('/admin/audit-logs').catch(() => ({ data: [] }))
+        API.get('/admin/audit-logs').catch(() => ({ data: [] })),
+        API.get('/admin/registration-requests').catch(() => ({ data: [] }))
       ]);
 
       setStats(statsRes.data);
@@ -106,6 +115,7 @@ export default function AdminDashboard({ defaultTab }) {
       setAmbulances(ambulancesRes.data || []);
       setUsers(usersRes.data || []);
       setPendingApprovals(pendingRes.data || []);
+      setRegistrationRequests(regRequestsRes.data || []);
       setEmergencies(emergenciesRes.data || []);
       setAuditLogs(auditLogsRes.data || []);
 
@@ -270,16 +280,21 @@ export default function AdminDashboard({ defaultTab }) {
     try {
       await API.post(`/admin/users/${userId}/approve`);
       showNotification('✓ Account approved & activated.');
+      setViewApplicantModalItem(null);
       fetchAllData();
     } catch (err) {
       showNotification(err.response?.data?.error || 'Approval failed.', 'error');
     }
   };
 
-  const handleRejectUser = async (userId) => {
+  const handleRejectUser = async (userId, customReason) => {
     try {
-      await API.post(`/admin/users/${userId}/reject`);
+      const reason = customReason || rejectionReasonInput || 'Application details could not be verified';
+      await API.post(`/admin/users/${userId}/reject`, { reason });
       showNotification('Account registration request has been rejected.');
+      setRejectModalItem(null);
+      setRejectionReasonInput('');
+      setViewApplicantModalItem(null);
       fetchAllData();
     } catch (err) {
       showNotification(err.response?.data?.error || 'Rejection failed.', 'error');
@@ -482,6 +497,7 @@ export default function AdminDashboard({ defaultTab }) {
             <div className="admin-tabs" role="tablist" aria-label="System Administration Sections">
               {[
                 { id: 'overview', label: '📊 System Overview', count: null },
+                { id: 'approvals', label: '📋 Registration Approvals', count: registrationRequests.filter(r => r.status === 'PENDING').length },
                 { id: 'doctors', label: '👨‍⚕️ Doctors', count: doctors.length },
                 { id: 'hospital-admins', label: '🏥 Hospital Admins', count: hospitalAdmins.length },
                 { id: 'drivers', label: '🚑 Ambulance Drivers', count: drivers.length },
@@ -720,6 +736,258 @@ export default function AdminDashboard({ defaultTab }) {
                 </div>
               </div>
 
+            </div>
+          )}
+
+          {/* ========================================================================= */}
+          {/* TAB: REGISTRATION APPROVALS (DOCTORS, HOSPITAL ADMINS, DRIVERS) */}
+          {/* ========================================================================= */}
+          {activeTab === 'approvals' && (
+            <div className="card" style={{ padding: 'var(--space-5)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px', marginBottom: 'var(--space-5)' }}>
+                <div>
+                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', backgroundColor: '#eff6ff', color: '#1d4ed8', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 800, marginBottom: '6px' }}>
+                    🛡️ CREDENTIAL VERIFICATION GATEWAY
+                  </div>
+                  <h2 style={{ fontSize: '20px', fontWeight: 900, color: 'var(--color-gray-900)' }}>
+                    Registration Applications & Approval Management
+                  </h2>
+                  <p style={{ fontSize: '13px', color: 'var(--color-gray-500)', marginTop: '2px' }}>
+                    Review submitted licenses, affiliations, and credentials for Doctors, Hospital Admins, and Ambulance Drivers before granting system access.
+                  </p>
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <button onClick={() => fetchAllData()} className="btn btn-secondary btn-sm">
+                    🔄 Refresh Applications
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter and Search Bar */}
+              <div style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: '12px',
+                padding: 'var(--space-4)',
+                backgroundColor: 'var(--color-gray-50)',
+                borderRadius: 'var(--radius-md)',
+                marginBottom: 'var(--space-5)',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', alignItems: 'center' }}>
+                  {/* Status Filter Buttons */}
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-gray-600)', marginRight: '4px' }}>Status:</span>
+                  {[
+                    { id: 'ALL', label: 'All' },
+                    { id: 'PENDING', label: '⏳ Pending' },
+                    { id: 'ACTIVE', label: '✅ Approved' },
+                    { id: 'REJECTED', label: '❌ Rejected' }
+                  ].map(st => (
+                    <button
+                      key={st.id}
+                      onClick={() => setRegStatusFilter(st.id)}
+                      className={`btn btn-sm ${regStatusFilter === st.id ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ fontSize: '11px', padding: '4px 10px' }}
+                    >
+                      {st.label}
+                    </button>
+                  ))}
+
+                  <div style={{ width: '1px', height: '24px', backgroundColor: 'var(--color-gray-300)', margin: '0 6px' }} />
+
+                  {/* Role Filter Buttons */}
+                  <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--color-gray-600)', marginRight: '4px' }}>Role:</span>
+                  {[
+                    { id: 'ALL', label: 'All Roles' },
+                    { id: 'DOCTOR', label: '👨‍⚕️ Doctors' },
+                    { id: 'HOSPITAL_ADMIN', label: '🏥 Hospital Admins' },
+                    { id: 'AMBULANCE_DRIVER', label: '🚑 Ambulance Drivers' }
+                  ].map(rf => (
+                    <button
+                      key={rf.id}
+                      onClick={() => setRegRoleFilter(rf.id)}
+                      className={`btn btn-sm ${regRoleFilter === rf.id ? 'btn-primary' : 'btn-secondary'}`}
+                      style={{ fontSize: '11px', padding: '4px 10px' }}
+                    >
+                      {rf.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Search box */}
+                <div style={{ minWidth: '220px', flex: '1 1 220px', maxWidth: '340px' }}>
+                  <input
+                    type="text"
+                    placeholder="Search applicant, license, hospital..."
+                    value={regSearchTerm}
+                    onChange={e => setRegSearchTerm(e.target.value)}
+                    className="form-input"
+                    style={{ fontSize: '12px', padding: '6px 10px' }}
+                  />
+                </div>
+              </div>
+
+              {/* Status Summary Chips */}
+              <div style={{ display: 'flex', gap: '12px', marginBottom: 'var(--space-4)', flexWrap: 'wrap' }}>
+                <div style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: '#fffbeb', border: '1px solid #fef3c7', fontSize: '12px', color: '#b45309', fontWeight: 700 }}>
+                  ⏳ Pending Review: {registrationRequests.filter(r => r.status === 'PENDING').length}
+                </div>
+                <div style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: '#ecfdf5', border: '1px solid #d1fae5', fontSize: '12px', color: '#047857', fontWeight: 700 }}>
+                  ✅ Approved & Active: {registrationRequests.filter(r => r.status === 'ACTIVE').length}
+                </div>
+                <div style={{ padding: '6px 12px', borderRadius: '8px', backgroundColor: '#fef2f2', border: '1px solid #fee2e2', fontSize: '12px', color: '#b91c1c', fontWeight: 700 }}>
+                  ❌ Rejected: {registrationRequests.filter(r => r.status === 'REJECTED').length}
+                </div>
+              </div>
+
+              {/* Applications Table */}
+              {(() => {
+                const filtered = registrationRequests
+                  .filter(r => regStatusFilter === 'ALL' || r.status === regStatusFilter)
+                  .filter(r => regRoleFilter === 'ALL' || r.role === regRoleFilter)
+                  .filter(r => {
+                    if (!regSearchTerm) return true;
+                    const term = regSearchTerm.toLowerCase();
+                    return (
+                      r.fullName?.toLowerCase().includes(term) ||
+                      r.email?.toLowerCase().includes(term) ||
+                      r.medicalLicense?.toLowerCase().includes(term) ||
+                      r.drivingLicense?.toLowerCase().includes(term) ||
+                      r.hospitalAffiliation?.toLowerCase().includes(term) ||
+                      r.vehicleNumber?.toLowerCase().includes(term) ||
+                      r.specialization?.toLowerCase().includes(term)
+                    );
+                  });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div style={{ textAlign: 'center', padding: '40px 20px', backgroundColor: 'var(--color-gray-50)', borderRadius: 'var(--radius-md)' }}>
+                      <div style={{ fontSize: '36px', marginBottom: '8px' }}>📋</div>
+                      <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--color-gray-700)' }}>No Registration Applications Found</div>
+                      <div style={{ fontSize: '12px', color: 'var(--color-gray-500)', marginTop: '4px' }}>
+                        No applicant requests match the selected role and status filters.
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="table-wrapper">
+                    <table className="data-table" style={{ background: 'white' }}>
+                      <thead>
+                        <tr>
+                          <th>Applicant Details</th>
+                          <th>Role Requested</th>
+                          <th>Professional Credentials & Affiliation</th>
+                          <th>Submitted</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filtered.map(app => (
+                          <tr key={app.id}>
+                            <td>
+                              <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--color-gray-900)' }}>
+                                {app.fullName || 'Applicant'}
+                              </div>
+                              <div style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>{app.email}</div>
+                              {app.phone && <div style={{ fontSize: '11px', color: 'var(--color-gray-500)' }}>📞 {app.phone}</div>}
+                            </td>
+
+                            <td>
+                              <StatusBadge status={app.role} size="sm" />
+                            </td>
+
+                            <td style={{ fontSize: '12px' }}>
+                              {app.role === 'DOCTOR' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <div><strong>Spec:</strong> {app.specialization || 'General'}</div>
+                                  <div><strong>Med Reg / License:</strong> <code style={{ fontSize: '11px', background: '#f1f5f9', padding: '2px 4px', borderRadius: '4px' }}>{app.medicalLicense || 'N/A'}</code></div>
+                                  <div><strong>Hospital:</strong> {app.hospitalAffiliation || app.hospitalName || 'Not specified'}</div>
+                                </div>
+                              )}
+
+                              {app.role === 'HOSPITAL_ADMIN' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <div><strong>Hospital:</strong> {app.hospitalAffiliation || app.hospitalName || 'Not specified'}</div>
+                                  {app.hospitalRegistrationNumber && <div><strong>Hosp Reg #:</strong> <code>{app.hospitalRegistrationNumber}</code></div>}
+                                  {app.hospitalAddress && <div style={{ color: 'var(--color-gray-500)' }}>📍 {app.hospitalAddress}</div>}
+                                </div>
+                              )}
+
+                              {app.role === 'AMBULANCE_DRIVER' && (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                                  <div><strong>Driving License:</strong> <code style={{ fontSize: '11px', background: '#f1f5f9', padding: '2px 4px', borderRadius: '4px' }}>{app.drivingLicense || 'N/A'}</code></div>
+                                  {app.vehicleNumber && <div><strong>Vehicle #:</strong> <code>{app.vehicleNumber}</code></div>}
+                                  <div><strong>Org/Affiliation:</strong> {app.organization || app.hospitalAffiliation || 'Emergency Dispatch Base'}</div>
+                                </div>
+                              )}
+                            </td>
+
+                            <td style={{ fontSize: '11px', color: 'var(--color-gray-500)', whiteSpace: 'nowrap' }}>
+                              {app.registeredAt ? new Date(app.registeredAt).toLocaleString() : 'Recent'}
+                            </td>
+
+                            <td>
+                              <StatusBadge status={app.status || 'PENDING'} size="sm" />
+                              {app.status === 'REJECTED' && app.rejectionReason && (
+                                <div style={{ fontSize: '10px', color: '#ef4444', marginTop: '4px', maxWidth: '140px', lineHeight: 1.3 }}>
+                                  Reason: {app.rejectionReason}
+                                </div>
+                              )}
+                            </td>
+
+                            <td>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                <button
+                                  onClick={() => { setViewApplicantModalItem(app); }}
+                                  className="btn btn-secondary btn-sm"
+                                  style={{ fontSize: '11px', padding: '3px 8px' }}
+                                  title="Inspect full registration details"
+                                >
+                                  🔍 Details
+                                </button>
+
+                                {app.status === 'PENDING' && (
+                                  <>
+                                    <button
+                                      onClick={() => handleApproveUser(app.id)}
+                                      className="btn btn-primary btn-sm"
+                                      style={{ fontSize: '11px', padding: '3px 8px', backgroundColor: '#10b981', borderColor: '#10b981' }}
+                                    >
+                                      ✓ Approve
+                                    </button>
+                                    <button
+                                      onClick={() => { setRejectModalItem(app); setRejectionReasonInput(''); }}
+                                      className="btn btn-secondary btn-sm"
+                                      style={{ fontSize: '11px', padding: '3px 8px', color: '#ef4444' }}
+                                    >
+                                      ✕ Reject
+                                    </button>
+                                  </>
+                                )}
+
+                                {app.status === 'REJECTED' && (
+                                  <button
+                                    onClick={() => handleApproveUser(app.id)}
+                                    className="btn btn-primary btn-sm"
+                                    style={{ fontSize: '11px', padding: '3px 8px', backgroundColor: '#10b981', borderColor: '#10b981' }}
+                                  >
+                                    ✓ Approve
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                );
+              })()}
             </div>
           )}
 
@@ -1979,6 +2247,211 @@ export default function AdminDashboard({ defaultTab }) {
                   >
                     Open Setup Page ↗
                   </a>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: Reject Application with Reason */}
+          {rejectModalItem && (
+            <div className="modal-backdrop" style={{
+              position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1100,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+            }}>
+              <div className="card" style={{ width: '100%', maxWidth: '520px', padding: 'var(--space-6)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '20px' }}>❌</span>
+                    <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0, color: '#b91c1c' }}>Reject Registration Application</h3>
+                  </div>
+                  <button onClick={() => setRejectModalItem(null)} className="btn btn-ghost btn-sm">✕</button>
+                </div>
+
+                <div style={{ background: 'var(--color-gray-50)', padding: '12px', borderRadius: '8px', marginBottom: '16px', fontSize: '13px' }}>
+                  <div><strong>Applicant:</strong> {rejectModalItem.fullName} ({rejectModalItem.email})</div>
+                  <div style={{ marginTop: '4px' }}><strong>Requested Role:</strong> <StatusBadge status={rejectModalItem.role} size="sm" /></div>
+                </div>
+
+                <div className="form-group" style={{ marginBottom: '12px' }}>
+                  <label className="form-label" style={{ fontWeight: 700, fontSize: '12px' }}>
+                    Select Quick Reason or Type Below:
+                  </label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '8px' }}>
+                    {[
+                      'Invalid medical license number',
+                      'Hospital affiliation could not be verified',
+                      'Invalid driving license details',
+                      'Duplicate registration submission',
+                      'Incomplete verification credentials'
+                    ].map(r => (
+                      <button
+                        key={r}
+                        type="button"
+                        onClick={() => setRejectionReasonInput(r)}
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: '11px', padding: '2px 8px', border: '1px solid var(--color-gray-300)' }}
+                      >
+                        + {r}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label" style={{ fontWeight: 700, fontSize: '12px' }}>
+                    Rejection Reason (will be displayed to applicant upon login attempt):
+                  </label>
+                  <textarea
+                    required
+                    rows={3}
+                    className="form-input"
+                    placeholder="Enter explicit reason for rejecting this application..."
+                    value={rejectionReasonInput}
+                    onChange={e => setRejectionReasonInput(e.target.value)}
+                    style={{ fontSize: '13px', width: '100%' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: 'var(--space-5)' }}>
+                  <button
+                    type="button"
+                    onClick={() => setRejectModalItem(null)}
+                    className="btn btn-secondary"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRejectUser(rejectModalItem.id, rejectionReasonInput)}
+                    className="btn btn-primary"
+                    style={{ backgroundColor: '#ef4444', borderColor: '#ef4444' }}
+                  >
+                    ✕ Confirm Rejection
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Modal: View Full Applicant Dossier */}
+          {viewApplicantModalItem && (
+            <div className="modal-backdrop" style={{
+              position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 1100,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px'
+            }}>
+              <div className="card" style={{ width: '100%', maxWidth: '600px', padding: 'var(--space-6)', maxHeight: '90vh', overflowY: 'auto' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '22px' }}>📋</span>
+                    <div>
+                      <h3 style={{ fontSize: '18px', fontWeight: 800, margin: 0 }}>Applicant Credential Dossier</h3>
+                      <p style={{ fontSize: '12px', color: 'var(--color-gray-500)', margin: 0 }}>UID: {viewApplicantModalItem.uid}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setViewApplicantModalItem(null)} className="btn btn-ghost btn-sm">✕</button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                  <div style={{ background: 'var(--color-gray-50)', padding: '10px 14px', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', fontWeight: 700, textTransform: 'uppercase' }}>Full Name</div>
+                    <div style={{ fontSize: '15px', fontWeight: 800, color: 'var(--color-gray-900)', marginTop: '2px' }}>{viewApplicantModalItem.fullName}</div>
+                  </div>
+                  <div style={{ background: 'var(--color-gray-50)', padding: '10px 14px', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', fontWeight: 700, textTransform: 'uppercase' }}>Requested Role</div>
+                    <div style={{ marginTop: '2px' }}><StatusBadge status={viewApplicantModalItem.role} size="sm" /></div>
+                  </div>
+                  <div style={{ background: 'var(--color-gray-50)', padding: '10px 14px', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', fontWeight: 700, textTransform: 'uppercase' }}>Email Address</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-gray-900)', marginTop: '2px' }}>{viewApplicantModalItem.email}</div>
+                  </div>
+                  <div style={{ background: 'var(--color-gray-50)', padding: '10px 14px', borderRadius: '8px' }}>
+                    <div style={{ fontSize: '11px', color: 'var(--color-gray-500)', fontWeight: 700, textTransform: 'uppercase' }}>Contact Phone</div>
+                    <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-gray-900)', marginTop: '2px' }}>{viewApplicantModalItem.phone || 'Not recorded'}</div>
+                  </div>
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--color-gray-200)', paddingTop: '14px', marginBottom: '16px' }}>
+                  <h4 style={{ fontSize: '13px', fontWeight: 800, textTransform: 'uppercase', color: 'var(--color-primary)', marginBottom: '10px' }}>
+                    Verified Professional Credentials
+                  </h4>
+
+                  {viewApplicantModalItem.role === 'DOCTOR' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
+                      <div><strong>Medical License No:</strong> <code style={{ display: 'block', marginTop: '2px', background: '#eff6ff', padding: '4px 8px', borderRadius: '4px' }}>{viewApplicantModalItem.medicalLicense || 'Not specified'}</code></div>
+                      <div><strong>Specialization:</strong> <div style={{ marginTop: '2px', fontWeight: 600 }}>{viewApplicantModalItem.specialization || 'General'}</div></div>
+                      <div style={{ gridColumn: '1 / -1' }}><strong>Hospital Affiliation:</strong> <div style={{ marginTop: '2px', fontWeight: 600 }}>{viewApplicantModalItem.hospitalAffiliation || viewApplicantModalItem.hospitalName || 'Not specified'}</div></div>
+                    </div>
+                  )}
+
+                  {viewApplicantModalItem.role === 'HOSPITAL_ADMIN' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
+                      <div><strong>Hospital Name:</strong> <div style={{ marginTop: '2px', fontWeight: 600 }}>{viewApplicantModalItem.hospitalAffiliation || viewApplicantModalItem.hospitalName || 'Not specified'}</div></div>
+                      <div><strong>Registration Number:</strong> <code style={{ display: 'block', marginTop: '2px', background: '#eff6ff', padding: '4px 8px', borderRadius: '4px' }}>{viewApplicantModalItem.hospitalRegistrationNumber || 'Not specified'}</code></div>
+                      <div style={{ gridColumn: '1 / -1' }}><strong>Hospital Address:</strong> <div style={{ marginTop: '2px', color: 'var(--color-gray-700)' }}>📍 {viewApplicantModalItem.hospitalAddress || 'Not specified'}</div></div>
+                    </div>
+                  )}
+
+                  {viewApplicantModalItem.role === 'AMBULANCE_DRIVER' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', fontSize: '13px' }}>
+                      <div><strong>Driving License No:</strong> <code style={{ display: 'block', marginTop: '2px', background: '#eff6ff', padding: '4px 8px', borderRadius: '4px' }}>{viewApplicantModalItem.drivingLicense || 'Not specified'}</code></div>
+                      <div><strong>Vehicle / Ambulance No:</strong> <code style={{ display: 'block', marginTop: '2px', background: '#eff6ff', padding: '4px 8px', borderRadius: '4px' }}>{viewApplicantModalItem.vehicleNumber || 'Not specified'}</code></div>
+                      <div style={{ gridColumn: '1 / -1' }}><strong>Assigned Organization:</strong> <div style={{ marginTop: '2px', fontWeight: 600 }}>{viewApplicantModalItem.organization || viewApplicantModalItem.hospitalAffiliation || 'Emergency Dispatch Base'}</div></div>
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--color-gray-200)', paddingTop: '12px', marginBottom: '16px', fontSize: '12px', color: 'var(--color-gray-600)' }}>
+                  <div><strong>Current Status:</strong> <StatusBadge status={viewApplicantModalItem.status || 'PENDING'} size="sm" /></div>
+                  <div style={{ marginTop: '4px' }}><strong>Registered At:</strong> {viewApplicantModalItem.registeredAt ? new Date(viewApplicantModalItem.registeredAt).toLocaleString() : 'N/A'}</div>
+                  {viewApplicantModalItem.reviewedAt && <div style={{ marginTop: '2px' }}><strong>Reviewed At:</strong> {new Date(viewApplicantModalItem.reviewedAt).toLocaleString()} by {viewApplicantModalItem.reviewedBy}</div>}
+                  {viewApplicantModalItem.rejectionReason && <div style={{ marginTop: '4px', color: '#ef4444' }}><strong>Rejection Reason:</strong> {viewApplicantModalItem.rejectionReason}</div>}
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', borderTop: '1px solid var(--color-gray-200)', paddingTop: '14px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setViewApplicantModalItem(null)}
+                    className="btn btn-secondary"
+                  >
+                    Close
+                  </button>
+
+                  {viewApplicantModalItem.status === 'PENDING' && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const item = viewApplicantModalItem;
+                          setViewApplicantModalItem(null);
+                          setRejectModalItem(item);
+                          setRejectionReasonInput('');
+                        }}
+                        className="btn btn-secondary"
+                        style={{ color: '#ef4444' }}
+                      >
+                        ✕ Reject Application
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleApproveUser(viewApplicantModalItem.id)}
+                        className="btn btn-primary"
+                        style={{ backgroundColor: '#10b981', borderColor: '#10b981' }}
+                      >
+                        ✓ Approve & Activate Account
+                      </button>
+                    </>
+                  )}
+
+                  {viewApplicantModalItem.status === 'REJECTED' && (
+                    <button
+                      type="button"
+                      onClick={() => handleApproveUser(viewApplicantModalItem.id)}
+                      className="btn btn-primary"
+                      style={{ backgroundColor: '#10b981', borderColor: '#10b981' }}
+                    >
+                      ✓ Approve & Reactivate
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

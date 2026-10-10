@@ -524,7 +524,7 @@ const HealthcareDashboard = () => {
                           hospitalLocation={selectedEmergency.hospitalLat && selectedEmergency.hospitalLng ? [selectedEmergency.hospitalLat, selectedEmergency.hospitalLng] : [12.9716, 77.5946]}
                           ambulanceLocation={ambulanceLocation ? [ambulanceLocation.latitude, ambulanceLocation.longitude] : [12.9650, 77.5850]}
                           ambulanceStatus={selectedEmergency.status}
-                          ambulanceUnitId={selectedEmergency.ambulanceUnitId || 'AMB-102'}
+                          ambulanceUnitId={selectedEmergency.ambulanceUnitId || selectedEmergency.ambulance?.unitId || (selectedEmergency.ambulanceId ? `Unit #${selectedEmergency.ambulanceId}` : 'Ambulance')}
                           driverName={selectedEmergency.driverName}
                           emergencyId={selectedEmergency.id}
                           height="360px"
@@ -843,7 +843,7 @@ const HealthcareDashboard = () => {
                       hospitalLocation={activeDoctorIncident.hospitalLat && activeDoctorIncident.hospitalLng ? [activeDoctorIncident.hospitalLat, activeDoctorIncident.hospitalLng] : [12.9716, 77.5946]}
                       ambulanceLocation={ambulanceLocation ? [ambulanceLocation.latitude, ambulanceLocation.longitude] : [12.9650, 77.5850]}
                       ambulanceStatus={activeDoctorIncident.status}
-                      ambulanceUnitId={activeDoctorIncident.ambulanceUnitId || 'AMB-102'}
+                      ambulanceUnitId={activeDoctorIncident.ambulanceUnitId || activeDoctorIncident.ambulance?.unitId || (activeDoctorIncident.ambulanceId ? `Unit #${activeDoctorIncident.ambulanceId}` : 'Ambulance')}
                       driverName={activeDoctorIncident.driverName}
                       emergencyId={activeDoctorIncident.id}
                       height="320px"
@@ -883,7 +883,7 @@ const HealthcareDashboard = () => {
             </h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '2px' }}>
               <span style={{ fontSize: '14px', fontWeight: 800, color: 'var(--color-primary)' }}>
-                Unit: {user?.ambulanceUnitId || currentJob?.ambulance?.unitId || 'AMB-102'}
+                Unit: {user?.ambulanceUnitId || currentJob?.ambulance?.unitId || (user?.ambulanceId ? `Unit #${user.ambulanceId}` : 'Assigned Unit')}
               </span>
               <span>•</span>
               <span style={{ fontSize: '13px', color: 'var(--color-gray-500)' }}>
@@ -935,12 +935,12 @@ const HealthcareDashboard = () => {
               </div>
               <div>
                 <div className="stat-card-label">Destination Hospital</div>
-                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-primary)' }}>{req.destinationHospital || 'City General Hospital'}</div>
+                <div style={{ fontSize: '13px', fontWeight: 600, color: 'var(--color-primary)' }}>{req.destinationHospital || req.hospitalName || 'Assigned Hospital Hub'}</div>
               </div>
               <div>
                 <div className="stat-card-label">Distance & ETA</div>
                 <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--color-secondary)' }}>
-                  {req.distanceKm || 3.2} km • ~{req.etaMinutes || 7} min
+                  {req.distanceKm != null ? `${req.distanceKm.toFixed(1)} km` : 'Calculating route'} • {req.etaMinutes != null ? `~${req.etaMinutes} min` : 'Calculating ETA'}
                 </div>
               </div>
             </div>
@@ -984,7 +984,7 @@ const HealthcareDashboard = () => {
                     ACTIVE RESPONSE: SOS-{activeEmergency.id}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--color-gray-600)' }}>
-                    Patient: {activeEmergency.patientName || activeEmergency.patientUid} • Destination: {activeEmergency.hospitalName || 'City Hospital'}
+                    Patient: {activeEmergency.patientName || activeEmergency.patientUid} • Destination: {activeEmergency.hospitalName || 'Assigned Hospital'}
                   </div>
                 </div>
               </div>
@@ -998,7 +998,7 @@ const HealthcareDashboard = () => {
               hospitalLocation={activeEmergency.hospitalLat && activeEmergency.hospitalLng ? [activeEmergency.hospitalLat, activeEmergency.hospitalLng] : [12.9716, 77.5946]}
               ambulanceLocation={ambulanceLocation ? [ambulanceLocation.latitude, ambulanceLocation.longitude] : [12.9650, 77.5850]}
               ambulanceStatus={activeEmergency.status}
-              ambulanceUnitId={user?.ambulanceUnitId || currentJob?.ambulance?.unitId || 'AMB-102'}
+              ambulanceUnitId={user?.ambulanceUnitId || currentJob?.ambulance?.unitId || (user?.ambulanceId ? `Unit #${user.ambulanceId}` : 'Ambulance')}
               driverName={user?.fullName || 'Operator'}
               emergencyId={activeEmergency.id}
               followAmbulance={true}

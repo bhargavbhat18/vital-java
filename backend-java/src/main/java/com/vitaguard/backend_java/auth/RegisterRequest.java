@@ -18,6 +18,17 @@ public class RegisterRequest {
     private String doctorPhone;
     private String doctorHospital;
 
+    // Applicant Details for Doctor, Hospital Admin, Ambulance Driver
+    private String medicalLicense;
+    private String specialization;
+    private String hospitalAffiliation;
+    private String hospitalName;
+    private String hospitalAddress;
+    private String hospitalRegistrationNumber;
+    private String drivingLicense;
+    private String vehicleNumber;
+    private String organization;
+
     // Getters and Setters
     public String getEmail() { return email; }
     public void setEmail(String email) { this.email = email; }
@@ -57,4 +68,31 @@ public class RegisterRequest {
 
     public String getDoctorHospital() { return doctorHospital; }
     public void setDoctorHospital(String doctorHospital) { this.doctorHospital = doctorHospital; }
+
+    public String getMedicalLicense() { return medicalLicense; }
+    public void setMedicalLicense(String medicalLicense) { this.medicalLicense = medicalLicense; }
+
+    public String getSpecialization() { return specialization; }
+    public void setSpecialization(String specialization) { this.specialization = specialization; }
+
+    public String getHospitalAffiliation() { return hospitalAffiliation != null ? hospitalAffiliation : hospitalName; }
+    public void setHospitalAffiliation(String hospitalAffiliation) { this.hospitalAffiliation = hospitalAffiliation; }
+
+    public String getHospitalName() { return hospitalName != null ? hospitalName : hospitalAffiliation; }
+    public void setHospitalName(String hospitalName) { this.hospitalName = hospitalName; }
+
+    public String getHospitalAddress() { return hospitalAddress; }
+    public void setHospitalAddress(String hospitalAddress) { this.hospitalAddress = hospitalAddress; }
+
+    public String getHospitalRegistrationNumber() { return hospitalRegistrationNumber; }
+    public void setHospitalRegistrationNumber(String hospitalRegistrationNumber) { this.hospitalRegistrationNumber = hospitalRegistrationNumber; }
+
+    public String getDrivingLicense() { return drivingLicense; }
+    public void setDrivingLicense(String drivingLicense) { this.drivingLicense = drivingLicense; }
+
+    public String getVehicleNumber() { return vehicleNumber; }
+    public void setVehicleNumber(String vehicleNumber) { this.vehicleNumber = vehicleNumber; }
+
+    public String getOrganization() { return organization; }
+    public void setOrganization(String organization) { this.organization = organization; }
 }

@@ -66,6 +66,21 @@ public class User implements UserDetails {
     private String phone;
     private Long doctorId;
 
+    // Applicant Details for Registration & Approval
+    private String medicalLicense;
+    private String specialization;
+    private String hospitalAffiliation;
+    private String hospitalAddress;
+    private String hospitalRegistrationNumber;
+    private String drivingLicense;
+    private String vehicleNumber;
+    private String organization;
+    private String rejectionReason;
+
+    private java.time.LocalDateTime registeredAt;
+    private java.time.LocalDateTime reviewedAt;
+    private String reviewedBy;
+
     public User() {}
 
     public User(String uid, String email, String password, String role) {
@@ -145,6 +160,42 @@ public class User implements UserDetails {
 
     public Long getDoctorId() { return doctorId; }
     public void setDoctorId(Long doctorId) { this.doctorId = doctorId; }
+
+    public String getMedicalLicense() { return medicalLicense; }
+    public void setMedicalLicense(String medicalLicense) { this.medicalLicense = medicalLicense; }
+
+    public String getSpecialization() { return specialization; }
+    public void setSpecialization(String specialization) { this.specialization = specialization; }
+
+    public String getHospitalAffiliation() { return hospitalAffiliation; }
+    public void setHospitalAffiliation(String hospitalAffiliation) { this.hospitalAffiliation = hospitalAffiliation; }
+
+    public String getHospitalAddress() { return hospitalAddress; }
+    public void setHospitalAddress(String hospitalAddress) { this.hospitalAddress = hospitalAddress; }
+
+    public String getHospitalRegistrationNumber() { return hospitalRegistrationNumber; }
+    public void setHospitalRegistrationNumber(String hospitalRegistrationNumber) { this.hospitalRegistrationNumber = hospitalRegistrationNumber; }
+
+    public String getDrivingLicense() { return drivingLicense; }
+    public void setDrivingLicense(String drivingLicense) { this.drivingLicense = drivingLicense; }
+
+    public String getVehicleNumber() { return vehicleNumber; }
+    public void setVehicleNumber(String vehicleNumber) { this.vehicleNumber = vehicleNumber; }
+
+    public String getOrganization() { return organization; }
+    public void setOrganization(String organization) { this.organization = organization; }
+
+    public String getRejectionReason() { return rejectionReason; }
+    public void setRejectionReason(String rejectionReason) { this.rejectionReason = rejectionReason; }
+
+    public java.time.LocalDateTime getRegisteredAt() { return registeredAt; }
+    public void setRegisteredAt(java.time.LocalDateTime registeredAt) { this.registeredAt = registeredAt; }
+
+    public java.time.LocalDateTime getReviewedAt() { return reviewedAt; }
+    public void setReviewedAt(java.time.LocalDateTime reviewedAt) { this.reviewedAt = reviewedAt; }
+
+    public String getReviewedBy() { return reviewedBy; }
+    public void setReviewedBy(String reviewedBy) { this.reviewedBy = reviewedBy; }
 
     // UserDetails implementations
     @Override

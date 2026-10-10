@@ -88,6 +88,9 @@ public class DoctorController {
 
         Doctor doctor = doctorOpt.get();
         List<EmergencyRequest> emergencies = emergencyRepository.findByDoctorId(doctor.getId());
+        if (emergencies.isEmpty() && !doctor.getId().equals(doctorUser.getId())) {
+            emergencies = emergencyRepository.findByDoctorId(doctorUser.getId());
+        }
         return ResponseEntity.ok(enrichEmergencies(emergencies));
     }
 
@@ -107,6 +110,9 @@ public class DoctorController {
 
         Doctor doctor = doctorOpt.get();
         List<EmergencyRequest> emergencies = emergencyRepository.findByDoctorId(doctor.getId());
+        if (emergencies.isEmpty() && !doctor.getId().equals(doctorUser.getId())) {
+            emergencies = emergencyRepository.findByDoctorId(doctorUser.getId());
+        }
 
         // Extract unique patients
         List<Map<String, Object>> patients = emergencies.stream()
@@ -144,7 +150,11 @@ public class DoctorController {
 
         // Verify this doctor is assigned to this emergency
         Optional<Doctor> doctorOpt = getDoctorForUser(doctorUser);
-        if (doctorOpt.isEmpty() || !doctorOpt.get().getId().equals(emergency.getDoctorId())) {
+        Long docProfileId = doctorOpt.map(Doctor::getId).orElse(doctorUser.getDoctorId());
+        boolean isAuthorized = (docProfileId != null && docProfileId.equals(emergency.getDoctorId()))
+                || (doctorUser.getId() != null && doctorUser.getId().equals(emergency.getDoctorId()))
+                || (doctorUser.getHospitalId() != null && doctorUser.getHospitalId().equals(emergency.getHospitalId()));
+        if (!isAuthorized) {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Not authorized to view this emergency"));
         }
 

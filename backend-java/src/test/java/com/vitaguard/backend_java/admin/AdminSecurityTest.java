@@ -343,63 +343,83 @@ class AdminSecurityTest {
     }
 
     // ==========================================
-    // 11. Patient signup cannot create DOCTOR
+    // 11. Doctor registration creates PENDING account awaiting approval
     // ==========================================
     @Test
-    @DisplayName("11. Patient signup cannot create DOCTOR")
-    void test11_PatientSignupCannotCreateDoctor() {
+    @DisplayName("11. Doctor registration creates PENDING account awaiting approval")
+    void test11_DoctorRegistrationCreatesPendingApproval() {
+        when(userRepository.existsByEmail("dr.applicant@test.com")).thenReturn(false);
+        when(passwordEncoder.encode("password123")).thenReturn("hashed_pass");
+
         RegisterRequest req = new RegisterRequest();
-        req.setEmail("attacker.doc@test.com");
-        req.setPassword("password");
+        req.setEmail("dr.applicant@test.com");
+        req.setPassword("password123");
+        req.setFullName("Dr. Applicant");
         req.setRole("DOCTOR");
+        req.setMedicalLicense("MCI-12345");
+        req.setSpecialization("Cardiology");
 
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> authService.register(req));
-        assertTrue(ex.getMessage().contains("Privileged roles"));
+        AuthResponse resp = authService.register(req);
+        assertEquals("PENDING", resp.getStatus());
+        assertNull(resp.getToken(), "Pending applicant must not receive immediate JWT");
     }
 
     // ==========================================
-    // 12. Patient signup cannot create HOSPITAL_ADMIN
+    // 12. Hospital Admin registration creates PENDING account awaiting approval
     // ==========================================
     @Test
-    @DisplayName("12. Patient signup cannot create HOSPITAL_ADMIN")
-    void test12_PatientSignupCannotCreateHospitalAdmin() {
+    @DisplayName("12. Hospital Admin registration creates PENDING account awaiting approval")
+    void test12_HospitalAdminRegistrationCreatesPendingApproval() {
+        when(userRepository.existsByEmail("admin.applicant@test.com")).thenReturn(false);
+        when(passwordEncoder.encode("password123")).thenReturn("hashed_pass");
+
         RegisterRequest req = new RegisterRequest();
-        req.setEmail("attacker.admin@test.com");
-        req.setPassword("password");
+        req.setEmail("admin.applicant@test.com");
+        req.setPassword("password123");
+        req.setFullName("Admin Applicant");
         req.setRole("HOSPITAL_ADMIN");
+        req.setHospitalName("City Hospital");
 
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> authService.register(req));
-        assertTrue(ex.getMessage().contains("Privileged roles"));
+        AuthResponse resp = authService.register(req);
+        assertEquals("PENDING", resp.getStatus());
+        assertNull(resp.getToken());
     }
 
     // ==========================================
-    // 13. Patient signup cannot create AMBULANCE_DRIVER
+    // 13. Ambulance Driver registration creates PENDING account awaiting approval
     // ==========================================
     @Test
-    @DisplayName("13. Patient signup cannot create AMBULANCE_DRIVER")
-    void test13_PatientSignupCannotCreateAmbulanceDriver() {
+    @DisplayName("13. Ambulance Driver registration creates PENDING account awaiting approval")
+    void test13_AmbulanceDriverRegistrationCreatesPendingApproval() {
+        when(userRepository.existsByEmail("driver.applicant@test.com")).thenReturn(false);
+        when(passwordEncoder.encode("password123")).thenReturn("hashed_pass");
+
         RegisterRequest req = new RegisterRequest();
-        req.setEmail("attacker.driver@test.com");
-        req.setPassword("password");
+        req.setEmail("driver.applicant@test.com");
+        req.setPassword("password123");
+        req.setFullName("Driver Applicant");
         req.setRole("AMBULANCE_DRIVER");
+        req.setDrivingLicense("DL-12345678");
 
-        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> authService.register(req));
-        assertTrue(ex.getMessage().contains("Privileged roles"));
+        AuthResponse resp = authService.register(req);
+        assertEquals("PENDING", resp.getStatus());
+        assertNull(resp.getToken());
     }
 
     // ==========================================
-    // 14. Patient signup cannot create SYSTEM_ADMIN
+    // 14. System Admin cannot be self-registered
     // ==========================================
     @Test
-    @DisplayName("14. Patient signup cannot create SYSTEM_ADMIN")
+    @DisplayName("14. System Admin cannot be self-registered")
     void test14_PatientSignupCannotCreateSystemAdmin() {
         RegisterRequest req = new RegisterRequest();
         req.setEmail("attacker.sysadmin@test.com");
-        req.setPassword("password");
+        req.setPassword("password123");
+        req.setFullName("Attacker");
         req.setRole("SYSTEM_ADMIN");
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> authService.register(req));
-        assertTrue(ex.getMessage().contains("Privileged roles"));
+        assertTrue(ex.getMessage().contains("System Admin accounts cannot be self-registered"));
     }
 
     // ==========================================

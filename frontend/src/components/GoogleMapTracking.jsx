@@ -14,7 +14,7 @@ const GoogleMapTracking = ({
   ambulanceLocation,
   hospitalLocation,
   ambulanceStatus = 'EN_ROUTE_TO_PATIENT',
-  ambulanceUnitId = 'AMB-102',
+  ambulanceUnitId = 'Ambulance',
   driverName,
   emergencyId,
   followAmbulance = false,

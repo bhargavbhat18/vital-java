@@ -578,7 +578,7 @@ const FamilyDashboard = () => {
               hospitalLocation={assignedHospital ? [assignedHospital.lat, assignedHospital.lng] : null}
               ambulanceLocation={trackingData?.ambulanceLatitude ? [trackingData.ambulanceLatitude, trackingData.ambulanceLongitude] : null}
               ambulanceStatus={trackingData?.status || activeSos.status}
-              ambulanceUnitId={trackingData?.ambulanceUnitId || activeSos.ambulanceUnitId || 'AMB-102'}
+              ambulanceUnitId={trackingData?.ambulanceUnitId || activeSos.ambulanceUnitId || (activeSos.ambulanceId ? `Unit #${activeSos.ambulanceId}` : 'Ambulance')}
               driverName={trackingData?.driverName}
               emergencyId={activeSos.id}
               height="440px"

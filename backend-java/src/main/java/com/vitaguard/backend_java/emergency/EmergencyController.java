@@ -219,18 +219,11 @@ public class EmergencyController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         }
 
-        // Verify role is HOSPITAL_ADMIN
-        if (!"HOSPITAL_ADMIN".equals(requester.getRole())) {
+        String role = requester.getRole();
+        if (!"HOSPITAL_ADMIN".equals(role) && !"SYSTEM_ADMIN".equals(role)) {
             Map<String, String> err = new HashMap<>();
-            err.put("error", "Only hospital administrators can accept emergencies");
+            err.put("error", "Only hospital administrators or system administrators can accept emergencies");
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(err);
-        }
-
-        // Verify hospital admin is linked to a hospital
-        if (requester.getHospitalId() == null) {
-            Map<String, String> err = new HashMap<>();
-            err.put("error", "Hospital admin not linked to a hospital");
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(err);
         }
 
         EmergencyRequest request = emergencyRepository.findById(id).orElse(null);
@@ -238,11 +231,25 @@ public class EmergencyController {
             return ResponseEntity.notFound().build();
         }
 
-        // Verify emergency belongs to this hospital
-        if (!requester.getHospitalId().equals(request.getHospitalId())) {
+        Long targetHospitalId = request.getHospitalId();
+        if ("HOSPITAL_ADMIN".equals(role)) {
+            if (requester.getHospitalId() == null) {
+                Map<String, String> err = new HashMap<>();
+                err.put("error", "Hospital admin not linked to a hospital");
+                return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(err);
+            }
+            if (!requester.getHospitalId().equals(request.getHospitalId())) {
+                Map<String, String> err = new HashMap<>();
+                err.put("error", "This emergency is not assigned to your hospital");
+                return ResponseEntity.status(HttpStatus.FORBIDDEN).body(err);
+            }
+            targetHospitalId = requester.getHospitalId();
+        }
+
+        if (targetHospitalId == null) {
             Map<String, String> err = new HashMap<>();
-            err.put("error", "This emergency is not assigned to your hospital");
-            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(err);
+            err.put("error", "Emergency does not have an assigned hospital");
+            return ResponseEntity.badRequest().body(err);
         }
 
         // Verify emergency is still pending hospital acceptance
@@ -253,7 +260,7 @@ public class EmergencyController {
         }
 
         try {
-            EmergencyRequest acceptedRequest = emergencyService.acceptEmergency(id, requester.getHospitalId());
+            EmergencyRequest acceptedRequest = emergencyService.acceptEmergency(id, targetHospitalId);
             return ResponseEntity.ok(enrichEmergency(acceptedRequest));
         } catch (IllegalArgumentException e) {
             Map<String, String> err = new HashMap<>();
@@ -410,13 +417,16 @@ public class EmergencyController {
             return ResponseEntity.notFound().build();
         }
 
-        // Authorization: Only assigned doctor, hospital admin for their hospital, or system admin can resolve
+        // Authorization: Only assigned doctor, hospital doctor for their hospital, hospital admin for their hospital, or system admin can resolve
         boolean isAuthorized = false;
         String role = requester.getRole();
         Long docProfileId = requester.getDoctorId() != null ? requester.getDoctorId() : requester.getId();
-        if ("DOCTOR".equals(role) && request.getDoctorId() != null && 
-                (request.getDoctorId().equals(docProfileId) || request.getDoctorId().equals(requester.getId()))) {
-            isAuthorized = true;
+        if ("DOCTOR".equals(role)) {
+            if (request.getDoctorId() != null && (request.getDoctorId().equals(docProfileId) || request.getDoctorId().equals(requester.getId()))) {
+                isAuthorized = true;
+            } else if (requester.getHospitalId() != null && requester.getHospitalId().equals(request.getHospitalId())) {
+                isAuthorized = true;
+            }
         } else if ("HOSPITAL_ADMIN".equals(role) && requester.getHospitalId() != null
                 && requester.getHospitalId().equals(request.getHospitalId())) {
             isAuthorized = true;

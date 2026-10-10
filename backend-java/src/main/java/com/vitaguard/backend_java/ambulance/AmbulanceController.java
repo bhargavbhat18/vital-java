@@ -72,6 +72,20 @@ public class AmbulanceController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    private Optional<Ambulance> resolveDriverAmbulance(User driver) {
+        if (driver == null) return Optional.empty();
+        if (driver.getAmbulanceId() != null) {
+            Optional<Ambulance> amb = ambulanceRepository.findById(driver.getAmbulanceId());
+            if (amb.isPresent()) return amb;
+        }
+        Optional<Ambulance> amb = ambulanceRepository.findByDriverId(driver.getId());
+        if (amb.isPresent() && driver.getAmbulanceId() == null) {
+            driver.setAmbulanceId(amb.get().getId());
+            userRepository.save(driver);
+        }
+        return amb;
+    }
+
     @GetMapping("/current-job")
     public ResponseEntity<?> getCurrentJob() {
         String driverUid = SecurityContextHolder.getContext().getAuthentication().getName();
@@ -81,14 +95,7 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can access this endpoint"));
         }
 
-        if (driver.getAmbulanceId() == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
-        }
-
-        Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
-        if (ambulanceOpt.isEmpty() && driver.getAmbulanceId() != null) {
-            ambulanceOpt = ambulanceRepository.findById(driver.getAmbulanceId());
-        }
+        Optional<Ambulance> ambulanceOpt = resolveDriverAmbulance(driver);
         if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "No ambulance assigned to this driver"));
         }
@@ -114,7 +121,8 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can access this endpoint"));
         }
 
-        if (driver.getAmbulanceId() == null) {
+        Optional<Ambulance> ambulanceOpt = resolveDriverAmbulance(driver);
+        if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
         }
 
@@ -169,7 +177,8 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can accept requests"));
         }
 
-        if (driver.getAmbulanceId() == null) {
+        Optional<Ambulance> ambulanceOpt = resolveDriverAmbulance(driver);
+        if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
         }
 
@@ -190,7 +199,8 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can decline requests"));
         }
 
-        if (driver.getAmbulanceId() == null) {
+        Optional<Ambulance> ambulanceOpt = resolveDriverAmbulance(driver);
+        if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
         }
 
@@ -211,14 +221,7 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can update status"));
         }
 
-        if (driver.getAmbulanceId() == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
-        }
-
-        Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
-        if (ambulanceOpt.isEmpty() && driver.getAmbulanceId() != null) {
-            ambulanceOpt = ambulanceRepository.findById(driver.getAmbulanceId());
-        }
+        Optional<Ambulance> ambulanceOpt = resolveDriverAmbulance(driver);
         if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No ambulance assigned to this driver"));
         }
@@ -265,24 +268,12 @@ public class AmbulanceController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of("error", "Only ambulance drivers can update location"));
         }
 
-        if (driver.getAmbulanceId() == null) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(Map.of("error", "Ambulance driver not linked to an ambulance"));
-        }
-
-        Optional<Ambulance> ambulanceOpt = ambulanceRepository.findByDriverId(driver.getId());
-        if (ambulanceOpt.isEmpty() && driver.getAmbulanceId() != null) {
-            ambulanceOpt = ambulanceRepository.findById(driver.getAmbulanceId());
-        }
+        Optional<Ambulance> ambulanceOpt = resolveDriverAmbulance(driver);
         if (ambulanceOpt.isEmpty()) {
             return ResponseEntity.badRequest().body(Map.of("error", "No ambulance assigned to this driver"));
         }
 
         Ambulance ambulance = ambulanceOpt.get();
-
-        // Only allow location updates when ambulance has an active emergency
-        if (ambulance.getCurrentEmergencyId() == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "No active emergency for this ambulance"));
-        }
 
         Double lat = body.containsKey("latitude") ? Double.valueOf(body.get("latitude").toString()) : null;
         Double lng = body.containsKey("longitude") ? Double.valueOf(body.get("longitude").toString()) : null;
@@ -297,16 +288,6 @@ public class AmbulanceController {
         ambulanceRepository.save(ambulance);
 
         // Broadcast location update via WebSocket
-        Map<String, Object> payload = new java.util.HashMap<>();
-        payload.put("ambulanceId", ambulance.getId());
-        payload.put("unitId", ambulance.getUnitId());
-        payload.put("status", ambulance.getStatus());
-        payload.put("latitude", lat);
-        payload.put("longitude", lng);
-        payload.put("timestamp", java.time.LocalDateTime.now().toString());
-        payload.put("emergencyId", ambulance.getCurrentEmergencyId());
-
-        // The AmbulanceService will broadcast this
         ambulanceService.updateAmbulanceStatus(ambulance.getId(), ambulance.getStatus(), lat, lng);
 
         return ResponseEntity.ok(Map.of("success", true, "latitude", lat, "longitude", lng));

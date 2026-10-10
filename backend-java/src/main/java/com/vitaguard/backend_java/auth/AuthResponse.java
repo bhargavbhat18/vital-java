@@ -11,12 +11,16 @@ public class AuthResponse {
     private Long id;
     private Long doctorId;
 
+    private String status;
+    private String message;
+
     public AuthResponse(String token, String uid, String email, String role, String fullName) {
         this.token = token;
         this.uid = uid;
         this.email = email;
         this.role = role;
         this.fullName = fullName;
+        this.status = "ACTIVE";
     }
 
     public AuthResponse(String token, String uid, String email, String role, String fullName, Long hospitalId, Long ambulanceId) {
@@ -33,6 +37,16 @@ public class AuthResponse {
         this.ambulanceId = ambulanceId;
         this.id = id;
         this.doctorId = doctorId;
+        this.status = "ACTIVE";
+    }
+
+    public AuthResponse(String message, String status, String role, String email, String fullName, String uid) {
+        this.message = message;
+        this.status = status;
+        this.role = role;
+        this.email = email;
+        this.fullName = fullName;
+        this.uid = uid;
     }
 
     public String getToken() { return token; }
@@ -61,4 +75,10 @@ public class AuthResponse {
 
     public Long getDoctorId() { return doctorId; }
     public void setDoctorId(Long doctorId) { this.doctorId = doctorId; }
+
+    public String getStatus() { return status; }
+    public void setStatus(String status) { this.status = status; }
+
+    public String getMessage() { return message; }
+    public void setMessage(String message) { this.message = message; }
 }

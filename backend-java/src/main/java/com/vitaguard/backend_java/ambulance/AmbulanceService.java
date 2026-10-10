@@ -58,8 +58,27 @@ public class AmbulanceService {
             return null;
         }
 
-        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE").stream()
-                .filter(amb -> amb.getDriver() != null)
+        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE");
+        if (availableAmbulances == null || availableAmbulances.isEmpty()) {
+            availableAmbulances = ambulanceRepository.findByStatus("available");
+        }
+        if (availableAmbulances == null) {
+            availableAmbulances = List.of();
+        }
+        availableAmbulances = availableAmbulances.stream()
+                .filter(amb -> {
+                    if (amb.getDriver() != null) return true;
+                    List<User> drivers = userRepository.findByAmbulanceId(amb.getId());
+                    return !drivers.isEmpty();
+                })
+                .peek(amb -> {
+                    if (amb.getDriver() == null) {
+                        List<User> drivers = userRepository.findByAmbulanceId(amb.getId());
+                        if (!drivers.isEmpty()) {
+                            amb.setDriver(drivers.get(0));
+                        }
+                    }
+                })
                 .collect(Collectors.toList());
         if (availableAmbulances.isEmpty()) {
             // No ambulances available
@@ -268,8 +287,27 @@ public class AmbulanceService {
     }
 
     private void requestNextNearestAmbulance(EmergencyRequest emergency) {
-        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE").stream()
-                .filter(amb -> amb.getDriver() != null)
+        List<Ambulance> availableAmbulances = ambulanceRepository.findByStatus("AVAILABLE");
+        if (availableAmbulances == null || availableAmbulances.isEmpty()) {
+            availableAmbulances = ambulanceRepository.findByStatus("available");
+        }
+        if (availableAmbulances == null) {
+            availableAmbulances = List.of();
+        }
+        availableAmbulances = availableAmbulances.stream()
+                .filter(amb -> {
+                    if (amb.getDriver() != null) return true;
+                    List<User> drivers = userRepository.findByAmbulanceId(amb.getId());
+                    return !drivers.isEmpty();
+                })
+                .peek(amb -> {
+                    if (amb.getDriver() == null) {
+                        List<User> drivers = userRepository.findByAmbulanceId(amb.getId());
+                        if (!drivers.isEmpty()) {
+                            amb.setDriver(drivers.get(0));
+                        }
+                    }
+                })
                 .collect(Collectors.toList());
         if (availableAmbulances.isEmpty()) {
             emergency.setStatus("AMBULANCE_UNAVAILABLE");

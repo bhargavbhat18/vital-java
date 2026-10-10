@@ -9,15 +9,6 @@ import { useAuth } from '../context/AuthContext';
  * Right: Clean medical login form
  */
 
-const demoAccounts = [
-  { email: 'patient@vitaguard.com', role: 'PATIENT', label: 'Patient', icon: '👤' },
-  { email: 'family@vitaguard.com', role: 'FAMILY_MEMBER', label: 'Family (Priya)', icon: '👨‍👩‍👧‍👦' },
-  { email: 'doctor@vitaguard.com', role: 'DOCTOR', label: 'Doctor', icon: '👨‍⚕️' },
-  { email: 'hospital-admin@vitalguard.com', role: 'HOSPITAL_ADMIN', label: 'Hospital Admin', icon: '🏥' },
-  { email: 'ambulance-driver@vitalguard.com', role: 'AMBULANCE_DRIVER', label: 'Driver', icon: '🚑' },
-  { email: 'sysadmin@vitaguard.com', role: 'SYSTEM_ADMIN', label: 'SysAdmin', icon: '⚡' },
-];
-
 const Login = () => {
   const { login } = useAuth();
   const navigate = useNavigate();
@@ -60,11 +51,7 @@ const Login = () => {
     }
   };
 
-  const handleSelectDemo = (demo) => {
-    setEmail(demo.email);
-    setPassword('password');
-    setError('');
-  };
+
 
   return (
     <div style={{
@@ -197,27 +184,38 @@ const Login = () => {
 
             {error && (
               <div style={{
-                padding: '10px 14px',
+                padding: '12px 14px',
                 borderRadius: 'var(--radius-md)',
-                backgroundColor: 'var(--color-critical-bg)',
-                border: '1px solid var(--color-critical-border)',
-                color: 'var(--color-critical)',
+                backgroundColor: error.toLowerCase().includes('waiting for administrator approval') || error.toLowerCase().includes('pending')
+                  ? 'rgba(234, 179, 8, 0.12)'
+                  : 'var(--color-critical-bg)',
+                border: error.toLowerCase().includes('waiting for administrator approval') || error.toLowerCase().includes('pending')
+                  ? '1px solid rgba(234, 179, 8, 0.35)'
+                  : '1px solid var(--color-critical-border)',
+                color: error.toLowerCase().includes('waiting for administrator approval') || error.toLowerCase().includes('pending')
+                  ? '#a16207'
+                  : 'var(--color-critical)',
                 fontSize: '12px',
                 fontWeight: 600,
-                marginBottom: 'var(--space-4)'
+                marginBottom: 'var(--space-4)',
+                lineHeight: 1.5
               }} role="alert">
-                ⚠️ {error}
+                {error.toLowerCase().includes('waiting for administrator approval') || error.toLowerCase().includes('pending')
+                  ? '⏳ ' + error
+                  : error.toLowerCase().includes('rejected')
+                  ? '🚫 ' + error
+                  : '⚠️ ' + error}
               </div>
             )}
 
             <form onSubmit={handleSubmit}>
               <div className="form-group">
-                <label className="form-label" htmlFor="email-input">Email Address</label>
+                <label className="form-label" htmlFor="email-input">Gmail / Email Address</label>
                 <input
                   id="email-input"
-                  type="email"
+                  type="text"
                   className="form-input"
-                  placeholder="name@vitaguard.com"
+                  placeholder="user@gmail.com or UID"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   required
@@ -249,33 +247,41 @@ const Login = () => {
               </button>
             </form>
 
-            {/* Quick Demo Credentials Switcher */}
+            {/* Role-Based Account Registration Links */}
             <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-5)', borderTop: '1px solid var(--color-gray-200)' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-gray-500)', textTransform: 'uppercase', marginBottom: '8px' }}>
-                Quick Demo Role Switcher
+              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--color-gray-500)', textTransform: 'uppercase', marginBottom: '10px' }}>
+                Need an account? Register by role:
               </div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-                {demoAccounts.map(d => (
-                  <button
-                    key={d.role}
-                    type="button"
-                    onClick={() => handleSelectDemo(d)}
-                    className="btn btn-secondary btn-sm"
-                    style={{ fontSize: '11px', padding: '4px 8px' }}
-                  >
-                    <span>{d.icon}</span>
-                    <span>{d.label}</span>
-                  </button>
-                ))}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                <Link
+                  to="/signup?role=PATIENT"
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '11px', padding: '6px 8px', textDecoration: 'none', textAlign: 'center', fontWeight: 700 }}
+                >
+                  👤 Patient & Family
+                </Link>
+                <Link
+                  to="/signup?role=DOCTOR"
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '11px', padding: '6px 8px', textDecoration: 'none', textAlign: 'center', fontWeight: 700 }}
+                >
+                  👨‍⚕️ Specialist Doctor
+                </Link>
+                <Link
+                  to="/signup?role=HOSPITAL_ADMIN"
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '11px', padding: '6px 8px', textDecoration: 'none', textAlign: 'center', fontWeight: 700 }}
+                >
+                  🏥 Hospital Admin
+                </Link>
+                <Link
+                  to="/signup?role=AMBULANCE_DRIVER"
+                  className="btn btn-secondary btn-sm"
+                  style={{ fontSize: '11px', padding: '6px 8px', textDecoration: 'none', textAlign: 'center', fontWeight: 700 }}
+                >
+                  🚑 Ambulance Driver
+                </Link>
               </div>
-            </div>
-
-            {/* Create account link */}
-            <div style={{ marginTop: 'var(--space-6)', textAlign: 'center', fontSize: '13px', color: 'var(--color-gray-600)' }}>
-              Need an account?{' '}
-              <Link to="/signup" style={{ color: 'var(--color-secondary)', fontWeight: 700, textDecoration: 'none' }}>
-                Create Patient Account
-              </Link>
             </div>
           </div>
         </div>

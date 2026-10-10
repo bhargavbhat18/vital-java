@@ -285,6 +285,7 @@ def main():
     # ----------------------------------------------------
     print("\n--- PHASE 5: Create a Fresh Emergency ---")
     cancel_active_emergencies(pat_headers, pat_uid)
+    requests.post(f"{BASE_URL}/api/doctor/status", json={"onDuty": True, "availableForEmergency": True}, headers=auth_tokens["DOCTOR"]["headers"])
     time.sleep(0.5)
 
     fresh_sos = requests.post(f"{BASE_URL}/api/emergency/sos", json={
@@ -384,6 +385,8 @@ def main():
     print("\n--- PHASE 7: Doctor Assignment and Monitoring ---")
     doc_id = e1_accepted.get("doctorId")
     doc_headers = auth_tokens["DOCTOR"]["headers"]
+    if doc_login_data and (doc_id == doc_login_data.get("doctorId") or (new_doc_ok and doc_id == new_doc_res.json().get("id"))):
+        doc_headers = {"Authorization": f"Bearer {doc_login_data['token']}"}
 
     # Verify assigned doctor belongs to hospital and matches department
     assigned_doc_res = requests.get(f"{BASE_URL}/api/emergency/{e1_id}/doctor", headers=pat_headers)

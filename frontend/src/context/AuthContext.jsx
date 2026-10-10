@@ -60,11 +60,13 @@ export const AuthProvider = ({ children }) => {
   const register = async (formData) => {
     const res = await API.post('/auth/register', formData);
     const { token: jwtToken, ...userData } = res.data;
-    localStorage.setItem('token', jwtToken);
-    syncUserStorage(userData);
-    setToken(jwtToken);
-    setUser(userData);
-    return userData;
+    if (jwtToken) {
+      localStorage.setItem('token', jwtToken);
+      syncUserStorage(userData);
+      setToken(jwtToken);
+      setUser(userData);
+    }
+    return res.data;
   };
 
   const logout = () => {
